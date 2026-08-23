@@ -99,6 +99,12 @@ vercel --prod
 ホスティング側に Cron が無い場合は、`.github/workflows/cron-reminders.yml`（GitHub Actions）または
 [cron-job.org](https://cron-job.org/) 等から下記を叩く。
 
+> `cron-reminders.yml` は **既定では自動実行しない**（`workflow_dispatch` のみ）。
+> Netlify / Vercel のスケジューラを使う構成では不要なため、未デプロイ状態で5分ごとに
+> 失敗し続けないようにしてある。使う場合は次の2点を行うこと。
+> 1. リポジトリの `Settings > Secrets and variables > Actions` に `APP_BASE_URL` と `CRON_SECRET` を登録
+> 2. ワークフロー内の `schedule:` のコメントを外す
+
 ```bash
 curl -X POST https://<host>/api/cron/reminders -H "x-cron-secret: $CRON_SECRET"
 ```

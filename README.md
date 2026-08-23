@@ -88,7 +88,7 @@
 |----|------|
 | アプリ | Next.js 15（App Router） / TypeScript / Tailwind CSS |
 | DB | PostgreSQL（Supabase / Neon）+ Prisma |
-| 定期実行 | Vercel Cron / Netlify Scheduled Functions / GitHub Actions（いずれも同梱） |
+| 定期実行 | Netlify Scheduled Functions（既定）/ Vercel Cron / GitHub Actions（要手動有効化）|
 | 社内通知 | **Slack Incoming Webhook（採用）** ／ Discord・LINE WORKS・Google Chat ／ LINE push（グループ・個人）も選択可 |
 | 認証 | scrypt + HMAC署名付き HttpOnly Cookie（外部依存なし） |
 | テスト | Vitest（77ケース）＋ 実DB結合確認スクリプト（10シナリオ） |
