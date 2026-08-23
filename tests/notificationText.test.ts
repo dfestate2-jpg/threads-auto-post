@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { buildExcerpt, buildNotificationText } from '@/lib/domain/notificationText'
 import { formatElapsedJa } from '@/lib/domain/time'
 import { escalationDedupeKey, guardDedupeKey, routineDedupeKey, watchdogDedupeKey } from '@/lib/domain/dedupe'
+import { buildWebhookPayload, detectWebhookFlavor } from '@/lib/notify/webhookPayload'
 
 describe('経過時間の日本語表現', () => {
   it.each([
@@ -121,5 +122,36 @@ describe('冪等キー（二重通知の防止）', () => {
     const t3 = new Date('2026-08-24T02:05:00Z')
     expect(watchdogDedupeKey('conv1', cycle, t1)).toBe(watchdogDedupeKey('conv1', cycle, t2))
     expect(watchdogDedupeKey('conv1', cycle, t1)).not.toBe(watchdogDedupeKey('conv1', cycle, t3))
+  })
+})
+
+describe('Webhook ペイロードの形式（社内通知チャネル）', () => {
+  it('Slack は { text } 形式', () => {
+    expect(detectWebhookFlavor('https://hooks.slack.com/services/T000/B000/xxxx')).toBe('SLACK')
+    expect(buildWebhookPayload('https://hooks.slack.com/services/T000/B000/xxxx', 'テスト')).toEqual({
+      text: 'テスト',
+    })
+  })
+
+  it('Discord は { content } 形式', () => {
+    expect(detectWebhookFlavor('https://discord.com/api/webhooks/1/abc')).toBe('DISCORD')
+    expect(buildWebhookPayload('https://discord.com/api/webhooks/1/abc', 'テスト')).toEqual({ content: 'テスト' })
+  })
+
+  it('LINE WORKS は入れ子の content 形式', () => {
+    expect(buildWebhookPayload('https://xxx.worksmobile.com/message/v1/bot/1/message', 'テスト')).toEqual({
+      content: { type: 'text', text: 'テスト' },
+    })
+  })
+
+  it('判別できない宛先は Slack 互換形式にフォールバックする', () => {
+    expect(detectWebhookFlavor('https://chat.googleapis.com/v1/spaces/xxx')).toBe('SLACK')
+    expect(detectWebhookFlavor('not-a-url')).toBe('SLACK')
+  })
+
+  it('長すぎる本文は切り詰める', () => {
+    const payload = buildWebhookPayload('https://hooks.slack.com/x', 'あ'.repeat(5000)) as { text: string }
+    expect(payload.text.length).toBeLessThanOrEqual(3801)
+    expect(payload.text.endsWith('…')).toBe(true)
   })
 })

@@ -54,8 +54,8 @@
 - 期限到来分をまとめて処理する設計のため、Cron が数回落ちても通知漏れが起きない
 
 ### 担当者の管理【仕様③】
-- 顧客ごとに担当者を設定。個人LINEへ通知
-- 未設定なら社内共通LINEグループへ通知
+- 顧客ごとに担当者を設定。担当者個人へ通知
+- 未設定なら社内共通チャンネル（Slack）へ通知
 
 ### エスカレーション
 - 経過時間の閾値ごとに通知先を追加（例：1時間→担当者 / 3時間→＋責任者 / 6時間→＋管理者）
@@ -89,11 +89,13 @@
 | アプリ | Next.js 15（App Router） / TypeScript / Tailwind CSS |
 | DB | PostgreSQL（Supabase / Neon）+ Prisma |
 | 定期実行 | Vercel Cron / Netlify Scheduled Functions / GitHub Actions（いずれも同梱） |
-| 通知 | LINE Messaging API push（グループ・個人）／ 汎用Webhook（Slack・Discord・LINE WORKS） |
+| 社内通知 | **Slack Incoming Webhook（採用）** ／ Discord・LINE WORKS・Google Chat ／ LINE push（グループ・個人）も選択可 |
 | 認証 | scrypt + HMAC署名付き HttpOnly Cookie（外部依存なし） |
-| テスト | Vitest（72ケース）＋ 実DB結合確認スクリプト（10シナリオ） |
+| テスト | Vitest（77ケース）＋ 実DB結合確認スクリプト（10シナリオ） |
 
-**月額運用コスト：¥0（Netlify + Supabase 無料枠 + Slack通知）〜 約¥5,000（LINE公式ライトプラン利用時）**
+**月額運用コスト：¥0（Netlify + Supabase 無料枠 + Slack通知）〜 約¥5,000**
+社内通知を Slack にしたことで、社内リマインド分（想定1,500通/月）の LINE 通数はゼロ。
+残る LINE コストは顧客への返信分のみ（月200通を超えるならライトプラン ¥5,000/月）。
 内訳 → [docs/01](docs/01-requirements.md#5-月額運用コスト)
 
 ---
@@ -107,7 +109,7 @@ npm install
 # 2. 環境変数
 cp .env.example .env
 #    DATABASE_URL / LINE_CHANNEL_SECRET / LINE_CHANNEL_ACCESS_TOKEN /
-#    INTERNAL_LINE_GROUP_ID / CRON_SECRET / SESSION_SECRET を設定
+#    INTERNAL_SLACK_WEBHOOK_URL / CRON_SECRET / SESSION_SECRET を設定
 
 # 3. データベース
 npx prisma migrate deploy
@@ -125,7 +127,7 @@ LINE Developers の Webhook URL に `https://<host>/api/line/webhook` を設定�
 ## 動作確認
 
 ```bash
-npm test                                          # 判定ロジック 72ケース
+npm test                                          # 判定ロジック 77ケース
 npm run typecheck                                 # 型チェック
 DATABASE_URL=postgresql://... npx tsx scripts/e2e-check.ts   # 実DBでの結合確認 10シナリオ
 ```
@@ -153,7 +155,7 @@ src/
 │   │   └── dedupe.ts           冪等キー
 │   ├── services/             DBトランザクション・通知送信
 │   ├── line/                 Messaging API クライアント・署名検証
-│   ├── notify/               通知チャネルのディスパッチ
+│   ├── notify/               通知チャネルのディスパッチ（Slack / Discord / LINE WORKS / LINE）
 │   └── auth/                 セッション・パスワード
 ├── components/               画面コンポーネント
 prisma/                       スキーマ・マイグレーション・seed

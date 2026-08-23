@@ -30,13 +30,24 @@ export async function loadNotifyDirectory(): Promise<NotifyDirectory> {
       .map((c) => ({ id: c.id, name: c.name, type: c.type, target: c.target }))
 
   const groupChannels = pick(ChannelPurpose.DEFAULT_GROUP)
-  if (groupChannels.length === 0 && env.internalLineGroupId) {
-    groupChannels.push({
-      id: 'env:internal-group',
-      name: '社内共通グループ',
-      type: 'LINE_GROUP',
-      target: env.internalLineGroupId,
-    })
+  if (groupChannels.length === 0) {
+    // 既定は Slack。LINE グループ運用に切り替える場合は INTERNAL_LINE_GROUP_ID を設定する
+    if (env.internalSlackWebhookUrl) {
+      groupChannels.push({
+        id: 'env:internal-slack',
+        name: '社内共通Slack',
+        type: 'WEBHOOK',
+        target: env.internalSlackWebhookUrl,
+      })
+    }
+    if (env.internalLineGroupId) {
+      groupChannels.push({
+        id: 'env:internal-group',
+        name: '社内共通LINEグループ',
+        type: 'LINE_GROUP',
+        target: env.internalLineGroupId,
+      })
+    }
   }
 
   const fallbackChannels = pick(ChannelPurpose.FALLBACK)

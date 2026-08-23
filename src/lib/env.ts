@@ -28,6 +28,11 @@ export const env = {
   get lineNotifyAccessToken() {
     return optional('LINE_NOTIFY_CHANNEL_ACCESS_TOKEN') ?? required('LINE_CHANNEL_ACCESS_TOKEN')
   },
+  /** 社内通知の既定チャネル（Slack Incoming Webhook）。Slack 運用時はこちらを使う */
+  get internalSlackWebhookUrl() {
+    return optional('INTERNAL_SLACK_WEBHOOK_URL')
+  },
+  /** 社内通知を LINE グループで行う場合の宛先 */
   get internalLineGroupId() {
     return optional('INTERNAL_LINE_GROUP_ID')
   },

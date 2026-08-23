@@ -1,6 +1,7 @@
 import type { NotifyTarget } from '@/lib/domain/escalation'
 import { env } from '@/lib/env'
 import { pushTextMessage } from '@/lib/line/client'
+import { buildWebhookPayload } from './webhookPayload'
 
 export interface DeliveryResult {
   target: NotifyTarget
@@ -12,11 +13,11 @@ async function sendWebhook(url: string, text: string): Promise<void> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 10_000)
   try {
-    // Slack / Discord / LINE WORKS いずれの Incoming Webhook でも受理される最小形
+    // 宛先サービス（Slack / Discord / LINE WORKS）に応じた形式で送る
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, content: text }),
+      body: JSON.stringify(buildWebhookPayload(url, text)),
       signal: controller.signal,
     })
     if (!res.ok) throw new Error(`webhook responded ${res.status}`)

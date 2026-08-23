@@ -75,7 +75,7 @@ export default async function SettingsPage() {
             purpose: c.purpose,
             enabled: c.enabled,
           }))}
-          envGroupConfigured={!!env.internalLineGroupId}
+          envGroupConfigured={!!env.internalSlackWebhookUrl || !!env.internalLineGroupId}
         />
         <HolidayTable
           initial={holidays.map((h) => ({

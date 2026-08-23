@@ -14,7 +14,7 @@
 | 3 | **LINE Messaging API — Reply Message** (`POST /v2/bot/message/reply`) | 顧客への即時返信（replyToken 使用） | 推奨 | **無料**（無料メッセージ通数にカウントされない）。replyToken は約1分・1回のみ有効 |
 | 4 | **LINE Messaging API — Get Profile** (`GET /v2/bot/profile/{userId}`) | 顧客の表示名・アイコン取得 | ✅ 必須 | 顧客名の初期値として使用 |
 | 5 | **LINE Messaging API — Get Group Summary / Member IDs** | 社内グループへの通知先確認 | 任意 | 認証済みアカウントのみ利用可 |
-| 6 | **Webhook (汎用 / Slack Incoming Webhook 互換)** | 社内通知の代替・冗長経路 | 推奨 | LINE通数削減とフェイルオーバー用（後述） |
+| 6 | **Slack Incoming Webhook** | **社内へのリマインド通知（採用構成）** | ✅ 必須 | 通数課金が無いためコスト最適。宛先URLから Discord / LINE WORKS も自動判別 |
 | 7 | **内部 Cron API** (`POST /api/cron/reminders`) | 定期実行でリマインド判定・送信 | ✅ 必須 | `X-Cron-Secret` による認証 |
 
 ### ⚠️ 最重要の技術的制約：LINE公式アカウントの「担当者返信」は Webhook に流れてこない
@@ -46,12 +46,13 @@ LINE Messaging API の Webhook は **顧客→公式アカウント方向のイ�
 |---|-----------|------|------|
 | 1 | **LINE公式アカウント（顧客対応用）** | 顧客からの問い合わせ受付 | 無料〜（プランによる） |
 | 2 | **LINE Developers アカウント + Messaging API チャネル①** | 上記公式アカウントに紐づけるチャネル。Webhook受信・返信送信 | 無料 |
-| 3 | **LINE Messaging API チャネル②（社内通知Bot用）** | 社内LINEグループへリマインド送信。①と分離することで顧客向け通数と社内通数を分けて管理できる | 無料〜 |
-| 4 | **社内LINEグループ** | Bot②を招待し、`groupId` を取得して通知先に設定 | 無料 |
+| 3 | **Slack ワークスペース + Incoming Webhook** | **社内リマインドの通知先（採用構成）。** メッセージ通数の課金が無い | 無料 |
+| 3' | *(代替)* LINE Messaging API チャネル②（社内通知Bot用） | 社内通知を LINE で行う場合。①と分離すると顧客向け通数と社内通数を分けて管理できる | 無料〜 |
+| 4' | *(代替)* 社内LINEグループ | Bot②を招待し、`groupId` を取得して通知先に設定 | 無料 |
 | 5 | **ホスティング（Vercel / Netlify / Cloud Run / VPS のいずれか）** | アプリ本体 + Cron | 後述 |
 | 6 | **PostgreSQL（Supabase / Neon）** | データベース | 無料枠あり |
 | 7 | **GitHub** | ソース管理・CI・自動デプロイ | 無料 |
-| 8 | *(任意)* Slack / Discord / LINE WORKS | 社内通知の冗長経路 | 無料枠あり |
+| 8 | *(任意)* Discord / LINE WORKS 等 | 社内通知の冗長経路（Slackが落ちたときの代替） | 無料枠あり |
 | 9 | *(任意)* Sentry / Better Stack | エラー監視・死活監視 | 無料枠あり |
 
 ### 事前に取得しておく値（環境変数に設定）
@@ -60,7 +61,8 @@ LINE Messaging API の Webhook は **顧客→公式アカウント方向のイ�
 LINE_CHANNEL_SECRET            # チャネル①のチャネルシークレット（署名検証用）
 LINE_CHANNEL_ACCESS_TOKEN      # チャネル①の長期アクセストークン（顧客への返信用）
 LINE_NOTIFY_CHANNEL_ACCESS_TOKEN # チャネル②の長期アクセストークン（社内通知用）
-INTERNAL_LINE_GROUP_ID         # 社内LINEグループのID（担当者未設定時の通知先）
+INTERNAL_SLACK_WEBHOOK_URL     # 社内Slackの Incoming Webhook URL（担当者未設定時の通知先）
+INTERNAL_LINE_GROUP_ID         # (代替) 社内LINEグループのID。Slack運用なら不要
 CRON_SECRET                    # Cron実行エンドポイントの共有シークレット
 SESSION_SECRET                 # 管理画面セッションCookieの署名鍵
 DATABASE_URL                   # PostgreSQL接続文字列
@@ -127,9 +129,10 @@ DATABASE_URL                   # PostgreSQL接続文字列
               ▼                          ▼
    ┌─────────────────────┐    ┌────────────────────────┐
    │ PostgreSQL          │    │ 通知ディスパッチャ        │
-   │ (Supabase / Neon)   │    │  ├ LINE push (チャネル②) │──▶ 社内LINEグループ
+   │ (Supabase / Neon)   │    │  ├ Slack Webhook 〔採用〕│──▶ 社内Slackチャンネル
    │  行ロックで排他制御   │    │  ├ LINE push (個人)      │──▶ 担当者個人LINE
-   └─────────────────────┘    │  └ 汎用Webhook (冗長)    │──▶ Slack等
+   └─────────────────────┘    │  ├ LINE push (グループ)   │──▶ 社内LINE(代替)
+                              │  └ 汎用Webhook (冗長)    │──▶ Discord 等
                               └────────────────────────┘
                            ▲
                            │ 毎分 or 5分ごと
@@ -154,31 +157,43 @@ DATABASE_URL                   # PostgreSQL接続文字列
 
 ## 5. 月額運用コスト
 
-### 5-1. LINEメッセージ通数の見積り（最重要コスト要因）
+### 5-1. 社内通知チャネルの選定とメッセージ通数
 
-LINE Messaging API の **push メッセージは課金対象**、**reply メッセージは無料**。
-また **グループへの push は「グループ内の人数分」としてカウントされる**点に注意。
+**本件では社内通知に Slack を採用する。**
 
-想定：社内グループ 5名 / 未返信が 1日あたり 5件発生 / 1件あたり平均 2回リマインド
+LINE Messaging API の **push メッセージは課金対象**（`reply` は無料）で、さらに
+**グループ宛の push は「グループ内の人数分」としてカウントされる**。
+社内グループ5名・未返信5件/日・平均2回リマインドの想定では以下のようになる。
 
 ```
 1日の社内通知 push 数 = 5件 × 2回 = 10 push
 グループ宛カウント     = 10 push × 5名 = 50通/日
-月間                  = 50 × 30 = 1,500通/月
+月間                  = 50 × 30 = 1,500通/月   → フリープラン(200通/月)では不足
 ```
 
-→ **LINE公式アカウント「フリープラン」（無料200通/月）では不足。**
+Slack の Incoming Webhook は**通数課金が無い**ため、この 1,500通/月がまるごと不要になる。
+本システムは通知チャネルを差し替え可能に実装しているため（`NotificationChannel`）、
+将来 LINE グループへ切り替える場合も環境変数と管理画面の設定変更だけで済む。
 
-| 対策 | 月額 | 備考 |
-|------|------|------|
-| (a) LINE公式アカウント **ライトプラン** | **¥5,000** | 5,000通/月。上記想定に収まる |
-| (b) 社内通知を **個人宛 push** に限定（グループ不使用） | ¥0〜 | 担当者1名宛なら 10通/日 = 300通/月 → ライトプラン推奨 |
-| (c) 社内通知を **Slack / Discord / LINE WORKS** に変更 | **¥0** | 通数課金なし。**コスト最適** |
-| (d) 通知間隔を「2時間ごと」に設定 | 通数半減 | 本システムの設定機能で変更可 |
+| 選択肢 | 社内通知の月額 | 備考 |
+|--------|---------------|------|
+| **(a) Slack Incoming Webhook 〔採用〕** | **¥0** | 通数課金なし。スレッド・検索・履歴も残る |
+| (b) Discord / LINE WORKS / Google Chat | ¥0 | 同様に対応済み（宛先URLで自動判別） |
+| (c) LINE公式アカウント ライトプラン | ¥5,000 | 社内通知もLINEで統一したい場合 |
+| (d) 通知間隔を「2時間ごと」にする | 通数半減 | (c) を選ぶ場合の緩和策。管理画面で変更可 |
 
-> 本システムは通知チャネルを差し替え可能に実装している（`NotificationChannel`）。
-> **コスト最優先なら (c) Slack/Discord、LINEにこだわるなら (a) ライトプラン。**
 > なお **LINE Notify は 2025年3月31日でサービス終了**しているため利用不可。
+
+#### 顧客への返信に必要な通数（Slack採用後も残るLINEコスト）
+
+管理画面から顧客へ返信する際は LINE Messaging API の `push` を使う（[07](./07-line-reply-detection.md)）。
+
+```
+顧客への返信 30通/日 × 30日 = 900通/月   → フリープラン(200通/月)では不足
+```
+
+**顧客対応の量に応じて LINE公式アカウントのプラン選定が必要**な点は Slack 採用後も変わらない。
+月200通（≒ 1日7件の返信）を超えるならライトプラン（¥5,000/月・5,000通）を見込むこと。
 
 ### 5-2. インフラ費用
 
@@ -198,9 +213,12 @@ LINE Messaging API の **push メッセージは課金対象**、**reply メッ�
 
 | パターン | 内訳 | **月額合計** |
 |---------|------|-------------|
-| **最安構成** | Netlify Free + Supabase Free + 社内通知はSlack/Discord | **¥0** |
-| **LINE通知・推奨構成** | Netlify Free + Supabase Free + LINE公式ライトプラン | **約¥5,000** |
+| **最小構成** | Netlify Free + Supabase Free + Slack通知 + LINEフリープラン | **¥0**（顧客返信が月200通以内の場合） |
+| **採用想定** | Netlify Free + Supabase Free + **Slack通知** + LINEライトプラン | **約¥5,000** |
 | **フル構成** | Vercel Pro + Supabase Pro + LINEライト + 監視 | **約¥16,800** |
+
+**Slack を社内通知に使うことで、社内リマインド分（想定1,500通/月）のLINE通数がゼロになる。**
+残るLINEコストは顧客への返信分のみで、これは本システムの有無にかかわらず発生する費用である。
 
 初期構築費用（開発）は本リポジトリの実装で代替。運用開始後の追加開発は別途。
 

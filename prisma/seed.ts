@@ -58,20 +58,19 @@ async function main() {
     })
   }
 
-  // --- 社内共通グループ（環境変数が設定されていれば登録） ---
-  const groupId = process.env.INTERNAL_LINE_GROUP_ID
-  if (groupId) {
-    const exists = await prisma.notificationChannel.findFirst({ where: { target: groupId } })
-    if (!exists) {
-      await prisma.notificationChannel.create({
-        data: {
-          name: '社内共通LINEグループ',
-          type: ChannelType.LINE_GROUP,
-          target: groupId,
-          purpose: ChannelPurpose.DEFAULT_GROUP,
-        },
-      })
-    }
+  // --- 社内共通の通知先（環境変数が設定されていれば登録） ---
+  // 既定は Slack。LINE グループ運用に切り替える場合は INTERNAL_LINE_GROUP_ID を設定する。
+  const defaultChannels: { name: string; type: ChannelType; target: string | undefined }[] = [
+    { name: '社内共通Slack', type: ChannelType.WEBHOOK, target: process.env.INTERNAL_SLACK_WEBHOOK_URL },
+    { name: '社内共通LINEグループ', type: ChannelType.LINE_GROUP, target: process.env.INTERNAL_LINE_GROUP_ID },
+  ]
+  for (const c of defaultChannels) {
+    if (!c.target) continue
+    const exists = await prisma.notificationChannel.findFirst({ where: { target: c.target } })
+    if (exists) continue
+    await prisma.notificationChannel.create({
+      data: { name: c.name, type: c.type, target: c.target, purpose: ChannelPurpose.DEFAULT_GROUP },
+    })
   }
 
   // --- 初期管理者 ---
