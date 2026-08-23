@@ -1,0 +1,10 @@
+[build]
+  command = "npm run build"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# 5分ごとにリマインド処理を起動する。
+# netlify/functions/reminders-cron.mts が /api/cron/reminders を呼び出す。
+[functions."reminders-cron"]
+  schedule = "*/5 * * * *"

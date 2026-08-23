@@ -1,0 +1,20 @@
+# ホスティング側にスケジューラが無い場合の代替。
+# リポジトリの Secrets に APP_BASE_URL と CRON_SECRET を登録して使う。
+# 注意: GitHub Actions のスケジュールは数分〜十数分の遅延が発生することがある。
+#       リマインド精度を重視するなら Vercel Cron / Netlify Scheduled Functions を推奨。
+name: reminders-cron
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger reminder job
+        run: |
+          curl -sS -X POST "${{ secrets.APP_BASE_URL }}/api/cron/reminders" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            --fail-with-body

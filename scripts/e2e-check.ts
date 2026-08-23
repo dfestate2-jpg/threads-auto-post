@@ -1,0 +1,269 @@
+/**
+ * 実データベースに対する結合確認スクリプト。
+ *
+ * 「絶対に見逃さない」「二重通知しない」「返信済みなら止まる」という中核要件を、
+ * 実際の DB トランザクション・行ロック・冪等キーを通して検証する。
+ *
+ *   DATABASE_URL=postgresql://... npx tsx scripts/e2e-check.ts
+ *
+ * 通知は LINE ではなくローカルの受信サーバー（WEBHOOKチャネル）へ送るため、
+ * 外部サービスに接続せずに配信経路まで含めて確認できる。
+ */
+import http from 'node:http'
+
+import { ChannelPurpose, ChannelType, PrismaClient, ReplyState, ResolvedVia } from '@prisma/client'
+
+import { DEFAULT_BUSINESS_HOURS } from '../src/lib/domain/businessHours'
+import { loadPolicyContext } from '../src/lib/services/context'
+import { recordInboundMessage, recordOutboundMessage } from '../src/lib/services/conversation'
+import { runReminderJob } from '../src/lib/services/reminderRunner'
+
+const prisma = new PrismaClient()
+const PORT = 4599
+const received: string[] = []
+
+let failures = 0
+function check(label: string, condition: boolean, detail?: unknown): void {
+  if (condition) {
+    console.log(`  ✅ ${label}`)
+  } else {
+    failures += 1
+    console.log(`  ❌ ${label}`, detail ?? '')
+  }
+}
+
+function startCaptureServer(): Promise<http.Server> {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', (c) => (body += c))
+      req.on('end', () => {
+        received.push(body)
+        res.writeHead(200).end('ok')
+      })
+    })
+    server.listen(PORT, () => resolve(server))
+  })
+}
+
+const MIN = 60_000
+
+async function reset(): Promise<void> {
+  await prisma.$transaction([
+    prisma.reminder.deleteMany(),
+    prisma.message.deleteMany(),
+    prisma.conversation.deleteMany(),
+    prisma.customer.deleteMany(),
+    prisma.webhookEvent.deleteMany(),
+    prisma.cronRun.deleteMany(),
+    prisma.notificationChannel.deleteMany(),
+    prisma.escalationRule.deleteMany(),
+    prisma.staff.deleteMany(),
+  ])
+  await prisma.appSettings.upsert({
+    where: { id: 1 },
+    create: {
+      id: 1,
+      businessHours: DEFAULT_BUSINESS_HOURS as object,
+      respectBusinessHours: false, // 時刻を自由に動かして検証するため無効化
+      defaultReminderIntervalMinutes: 60,
+      firstReminderDelayMinutes: 60,
+      maxSilenceGuardMinutes: 180,
+    },
+    update: {
+      respectBusinessHours: false,
+      defaultReminderIntervalMinutes: 60,
+      firstReminderDelayMinutes: 60,
+      maxSilenceGuardMinutes: 180,
+      businessHours: DEFAULT_BUSINESS_HOURS as object,
+    },
+  })
+  await prisma.notificationChannel.create({
+    data: {
+      name: 'テスト受信',
+      type: ChannelType.WEBHOOK,
+      target: `http://127.0.0.1:${PORT}/hook`,
+      purpose: ChannelPurpose.DEFAULT_GROUP,
+    },
+  })
+  received.length = 0
+}
+
+async function inbound(lineUserId: string, text: string, at: Date, messageId: string) {
+  return recordInboundMessage(
+    { lineUserId, lineMessageId: messageId, messageType: 'text', text, sentAt: at },
+    await loadPolicyContext(at),
+  )
+}
+
+async function main(): Promise<void> {
+  const server = await startCaptureServer()
+  const T0 = new Date('2026-08-24T01:00:00Z') // JST 10:00 月曜
+
+  try {
+    // ---------------------------------------------------------------------
+    console.log('\n① 顧客メッセージ受信 → 未返信として管理される')
+    await reset()
+    const r1 = await inbound('Ucustomer1', '〇〇について聞きたいです', T0, 'msg-1')
+    check('未返信として計上される', r1.awaiting)
+    check(
+      '次回リマインドは受信の1時間後',
+      r1.nextReminderAt?.toISOString() === new Date(T0.getTime() + 60 * MIN).toISOString(),
+      r1.nextReminderAt,
+    )
+
+    // ---------------------------------------------------------------------
+    console.log('\n② 1時間後に1回目、2時間後に2回目のリマインドが送られる')
+    let s = await runReminderJob(new Date(T0.getTime() + 59 * MIN))
+    check('59分時点では送られない', s.sent === 0, s)
+
+    s = await runReminderJob(new Date(T0.getTime() + 60 * MIN))
+    check('60分時点で1通送られる', s.sent === 1, s)
+    check('通知本文が依頼書式になっている', received[0]?.includes('公式LINE未返信リマインド') === true)
+    check('未返信時間が表示される', received[0]?.includes('未返信時間：1時間') === true, received[0])
+
+    s = await runReminderJob(new Date(T0.getTime() + 120 * MIN))
+    check('120分時点で2通目が送られる', s.sent === 1 && received.length === 2, { s, count: received.length })
+
+    // ---------------------------------------------------------------------
+    console.log('\n③ 同じ時刻にCronが多重起動しても二重通知しない')
+    const before = received.length
+    const results = await Promise.all([
+      runReminderJob(new Date(T0.getTime() + 180 * MIN)),
+      runReminderJob(new Date(T0.getTime() + 180 * MIN)),
+      runReminderJob(new Date(T0.getTime() + 180 * MIN)),
+    ])
+    const sentTotal = results.reduce((a, b) => a + b.sent, 0)
+    check('3並列でも送信は1通だけ', sentTotal === 1 && received.length === before + 1, {
+      sentTotal,
+      delta: received.length - before,
+    })
+
+    // ---------------------------------------------------------------------
+    console.log('\n④ 担当者が返信すると対応済みになり、以降通知が止まる')
+    const customer = await prisma.customer.findUniqueOrThrow({ where: { lineUserId: 'Ucustomer1' } })
+    const T_reply = new Date(T0.getTime() + 210 * MIN)
+    const out = await recordOutboundMessage(
+      { customerId: customer.id, text: 'ご連絡ありがとうございます', sentAt: T_reply, source: 'ADMIN_CONSOLE', via: ResolvedVia.ADMIN_REPLY },
+      await loadPolicyContext(T_reply),
+    )
+    check('未返信状態が解消される', out.stillAwaiting === false)
+    check('次回リマインドが取り消される', out.nextReminderAt === null)
+
+    const conv = await prisma.conversation.findUniqueOrThrow({ where: { customerId: customer.id } })
+    check('対応状況が「対応済み」になる', conv.handlingStatus === 'DONE', conv.handlingStatus)
+    check('対応済み日時が記録される', conv.resolvedAt !== null)
+
+    const countAfterReply = received.length
+    for (const h of [4, 5, 6, 12, 24]) {
+      await runReminderJob(new Date(T0.getTime() + h * 60 * MIN))
+    }
+    check('返信後は何時間経っても通知されない', received.length === countAfterReply, {
+      delta: received.length - countAfterReply,
+    })
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑤ 顧客の追加メッセージでカウントが再スタートする【仕様①】')
+    await reset()
+    await inbound('Ucustomer2', '最初の質問です', T0, 'msg-2a')
+    const r2 = await inbound('Ucustomer2', '追加の質問です', new Date(T0.getTime() + 40 * MIN), 'msg-2b')
+    check(
+      '次回リマインドが最新メッセージ基準へ後ろ倒しになる',
+      r2.nextReminderAt?.toISOString() === new Date(T0.getTime() + 100 * MIN).toISOString(),
+      r2.nextReminderAt,
+    )
+    s = await runReminderJob(new Date(T0.getTime() + 60 * MIN))
+    check('元の予定時刻では送られない', s.sent === 0, s)
+    s = await runReminderJob(new Date(T0.getTime() + 100 * MIN))
+    check('再スタート後の予定時刻で送られる', s.sent === 1, s)
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑥ 連投で通知が先送りされ続けても、保険で必ず通知される（見逃し防止）')
+    await reset()
+    await inbound('Ucustomer3', 'メッセージ1', T0, 'msg-3a')
+    // 50分おきに送り続ける = 通常ロジックだけなら永久に1時間後が来ない
+    for (const [i, offset] of [50, 100, 150, 200, 250].entries()) {
+      await inbound('Ucustomer3', `メッセージ${i + 2}`, new Date(T0.getTime() + offset * MIN), `msg-3b${i}`)
+    }
+    let guardSent = 0
+    for (let m = 0; m <= 300; m += 5) {
+      const res = await runReminderJob(new Date(T0.getTime() + m * MIN))
+      guardSent += res.sent
+    }
+    check('連投中でも通知が出る', guardSent > 0, { guardSent })
+    const guardReminder = await prisma.reminder.findFirst({ where: { kind: 'GUARD' } })
+    check('保険（GUARD）として記録される', guardReminder !== null)
+    check(
+      '最初の未返信からの実経過が併記される',
+      received.some((r) => r.includes('最初の未返信から')),
+      received[0],
+    )
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑦ エスカレーションは1サイクル1回だけ発火する')
+    await reset()
+    await prisma.escalationRule.createMany({
+      data: [
+        { name: '1時間', thresholdMinutes: 60, notifyAssignee: true, notifyManager: false, notifyAdmins: false, notifyGroup: true, enabled: true },
+        { name: '3時間', thresholdMinutes: 180, notifyAssignee: true, notifyManager: true, notifyAdmins: false, notifyGroup: true, enabled: true },
+      ],
+    })
+    await inbound('Ucustomer4', 'エスカレーション確認', T0, 'msg-4a')
+    for (let m = 0; m <= 300; m += 5) {
+      await runReminderJob(new Date(T0.getTime() + m * MIN))
+    }
+    const escalations = await prisma.reminder.findMany({ where: { kind: 'ESCALATION' } })
+    check('エスカレーションが2回（1時間・3時間）記録される', escalations.length === 2, escalations.map((e) => e.dedupeKey))
+    const dupes = new Set(escalations.map((e) => e.dedupeKey))
+    check('同じ段階が重複しない', dupes.size === escalations.length)
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑧ Webhook の再送（同一メッセージID）は二重登録されない')
+    await reset()
+    await inbound('Ucustomer5', '重複確認', T0, 'msg-5a')
+    const dup = await inbound('Ucustomer5', '重複確認', T0, 'msg-5a')
+    check('重複として弾かれる', dup.duplicate === true)
+    const msgCount = await prisma.message.count({ where: { customer: { lineUserId: 'Ucustomer5' } } })
+    check('メッセージは1件しか保存されない', msgCount === 1, msgCount)
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑨ 「通知しない」設定の顧客にはリマインドしない')
+    await reset()
+    await inbound('Ucustomer6', '通知OFF確認', T0, 'msg-6a')
+    await prisma.customer.update({ where: { lineUserId: 'Ucustomer6' }, data: { reminderIntervalMinutes: 0 } })
+    const c6 = await prisma.customer.findUniqueOrThrow({ where: { lineUserId: 'Ucustomer6' }, include: { conversation: true } })
+    const { rescheduleConversation } = await import('../src/lib/services/conversation')
+    await rescheduleConversation(c6.conversation!.id, await loadPolicyContext(T0))
+    let offSent = 0
+    for (let m = 0; m <= 300; m += 30) offSent += (await runReminderJob(new Date(T0.getTime() + m * MIN))).sent
+    check('1通も送られない', offSent === 0, offSent)
+    check('未返信状態としては残る（一覧で見える）', (await prisma.conversation.count({ where: { replyState: ReplyState.AWAITING } })) === 1)
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑩ 営業時間外は翌営業日へ繰り延べられる')
+    await reset()
+    await prisma.appSettings.update({ where: { id: 1 }, data: { respectBusinessHours: true } })
+    const evening = new Date('2026-08-24T10:30:00Z') // JST 19:30
+    const r10 = await inbound('Ucustomer7', '営業時間確認', evening, 'msg-7a')
+    check(
+      '翌営業日の開店時刻（JST 9:00）に繰り延べられる',
+      r10.nextReminderAt?.toISOString() === new Date('2026-08-25T00:00:00Z').toISOString(),
+      r10.nextReminderAt,
+    )
+    const nightRun = await runReminderJob(new Date('2026-08-24T14:00:00Z')) // JST 23:00
+    check('営業時間外には送られない', nightRun.sent === 0, nightRun)
+    const morningRun = await runReminderJob(new Date('2026-08-25T00:05:00Z')) // JST 9:05
+    check('翌営業日の朝に送られる', morningRun.sent === 1, morningRun)
+  } finally {
+    server.close()
+    await prisma.$disconnect()
+  }
+
+  console.log(`\n${failures === 0 ? '✅ 全項目 合格' : `❌ ${failures} 件 失敗`}`)
+  process.exit(failures === 0 ? 0 : 1)
+}
+
+main().catch((e) => {
+  console.error(e)
+  process.exit(1)
+})

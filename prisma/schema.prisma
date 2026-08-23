@@ -1,0 +1,423 @@
+// ===========================================================================
+//  公式LINE 未返信リマインドシステム — データベーススキーマ
+//  設計意図の詳細は docs/03-database-design.md を参照
+// ===========================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+/// メッセージの向き
+enum Direction {
+  INBOUND /// 顧客 → 公式LINE
+  OUTBOUND /// 公式LINE → 顧客（担当者の返信）
+}
+
+/// 未返信状態機械（システムが自動判定する内部状態）
+enum ReplyState {
+  AWAITING /// 未返信（顧客の最新メッセージ > 担当者の最新返信）
+  REPLIED /// 返信済み
+}
+
+/// 管理画面で人が管理する対応状況
+enum HandlingStatus {
+  UNHANDLED /// 未対応
+  IN_PROGRESS /// 対応中
+  DONE /// 対応済み
+  NEEDS_CHECK /// 要確認
+}
+
+enum StaffRole {
+  STAFF /// 担当者
+  MANAGER /// 責任者
+  ADMIN /// 管理者
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+/// リマインドの種別
+enum ReminderKind {
+  ROUTINE /// 通常の定期リマインド
+  ESCALATION /// 閾値超過によるエスカレーション
+  GUARD /// 連投による起点リセットを打ち消す保険通知
+  WATCHDOG /// 配信遅延検知（システム異常の通知）
+}
+
+enum ReminderStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED /// 確保後、送信直前の再判定で「返信済み」と判明したため中止
+}
+
+/// 通知チャネル種別
+enum ChannelType {
+  LINE_GROUP /// LINE Messaging API push（グループ宛）
+  LINE_USER /// LINE Messaging API push（個人宛）
+  WEBHOOK /// 汎用 Webhook（Slack / Discord / LINE WORKS 等）
+}
+
+/// 通知チャネルの役割
+enum ChannelPurpose {
+  DEFAULT_GROUP /// 担当者未設定時の社内共通グループ
+  ADMIN /// 管理者向け（エスカレーション最終段・watchdog）
+  FALLBACK /// 主経路が連続失敗したときの代替
+}
+
+/// 「返信済み」と判定した経路
+enum ResolvedVia {
+  ADMIN_REPLY /// 管理画面から返信を送信した
+  MANUAL /// 管理画面で「対応済み」に変更した
+  INGEST_API /// 外部連携から返信を取り込んだ
+  WEBHOOK /// LINE Webhook 由来の送信イベント（Module Channel 等）
+}
+
+// ---------------------------------------------------------------------------
+// マスタ
+// ---------------------------------------------------------------------------
+
+/// 社内担当者
+model Staff {
+  id            String    @id @default(cuid())
+  name          String
+  /// 個人LINEへ通知する場合のユーザーID（Bot②と友だちである必要がある）
+  lineUserId    String?   @unique
+  email         String?   @unique
+  role          StaffRole @default(STAFF)
+  /// 責任者（エスカレーション先）
+  managerId     String?
+  manager       Staff?    @relation("StaffManager", fields: [managerId], references: [id], onDelete: SetNull)
+  members       Staff[]   @relation("StaffManager")
+  /// 通知を受け取るか
+  notifyEnabled Boolean   @default(true)
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  customers    Customer[]
+  sentMessages Message[]
+  users        User[]
+
+  @@index([active])
+  @@map("staff")
+}
+
+/// 管理画面ログインユーザー
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  passwordHash     String
+  name             String
+  role             UserRole  @default(STAFF)
+  staffId          String?
+  staff            Staff?    @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  active           Boolean   @default(true)
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@map("users")
+}
+
+/// 顧客（LINEユーザー）
+model Customer {
+  id                      String   @id @default(cuid())
+  /// LINE の userId（U から始まる33文字）
+  lineUserId              String   @unique
+  /// LINE プロフィール上の表示名
+  displayName             String?
+  /// 管理画面で編集できる顧客名（優先して表示される）
+  name                    String?
+  pictureUrl              String?
+  note                    String?
+  /// 担当者。null なら社内共通グループへ通知
+  assigneeId              String?
+  assignee                Staff?   @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  /// この顧客だけ通知間隔を上書きする（分）。null = 全体設定に従う / 0 = 通知しない
+  reminderIntervalMinutes Int?
+  /// ブロック（unfollow）されている
+  blocked                 Boolean  @default(false)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  conversation Conversation?
+  messages     Message[]
+  reminders    Reminder[]
+
+  @@index([assigneeId])
+  @@index([blocked])
+  @@map("customers")
+}
+
+// ---------------------------------------------------------------------------
+// 中核：未返信状態機械
+// ---------------------------------------------------------------------------
+
+/// 顧客ごとに 1 行。未返信判定とリマインドスケジュールの単一の真実の源。
+model Conversation {
+  id         String   @id @default(cuid())
+  customerId String   @unique
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  replyState     ReplyState     @default(REPLIED)
+  handlingStatus HandlingStatus @default(DONE)
+
+  /// 顧客からの最新メッセージ
+  lastInboundAt        DateTime?
+  lastInboundMessageId String?
+  /// 通知本文に載せるための最新メッセージ抜粋
+  lastInboundText      String?
+  /// 担当者からの最新返信
+  lastOutboundAt       DateTime?
+
+  /// 【仕様①】リマインド経過時間のカウント起点。顧客の追加メッセージでリセットされる
+  awaitingSince    DateTime?
+  /// 【保険】直近の返信以降で最初に届いた未返信メッセージの時刻。追加メッセージではリセットしない。
+  /// エスカレーション判定と「連投による通知先延ばし」防止に使う
+  firstUnrepliedAt DateTime?
+
+  reminderCount   Int       @default(0)
+  lastReminderAt  DateTime?
+  /// 次にリマインドを送るべき時刻。NULL = 送らない（返信済み / 通知OFF）
+  nextReminderAt  DateTime?
+  /// 既に発火したエスカレーション段階（EscalationRule.thresholdMinutes の最大値）
+  escalationLevel Int       @default(0)
+
+  resolvedAt   DateTime?
+  resolvedVia  ResolvedVia?
+  resolvedById String?
+
+  /// 楽観ロック。管理画面の同時編集による上書き事故を防ぐ
+  version   Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reminders Reminder[]
+
+  /// Cron が期限到来分を引くための主索引
+  @@index([nextReminderAt])
+  @@index([replyState, nextReminderAt])
+  @@index([handlingStatus])
+  @@index([awaitingSince])
+  @@map("conversations")
+}
+
+/// 送受信メッセージの全ログ
+model Message {
+  id             String   @id @default(cuid())
+  customerId     String
+  customer       Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  conversationId String?
+
+  direction     Direction
+  /// LINE 側のメッセージID。Webhook 再送の冪等性担保に使う
+  lineMessageId String?   @unique
+  messageType   String    @default("text")
+  text          String?
+  sentAt        DateTime
+  /// 送信した担当者（OUTBOUND のみ）
+  sentByStaffId String?
+  sentByStaff   Staff?    @relation(fields: [sentByStaffId], references: [id], onDelete: SetNull)
+  /// LINE_WEBHOOK / ADMIN_CONSOLE / INGEST_API / MANUAL
+  source        String
+  raw           Json?
+  createdAt     DateTime  @default(now())
+
+  @@index([customerId, sentAt])
+  @@index([conversationId, sentAt])
+  @@index([direction, sentAt])
+  @@map("messages")
+}
+
+/// 送信した（または送信しようとした）リマインドの記録。二重通知防止の要。
+model Reminder {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  customerId     String
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  kind     ReminderKind
+  /// この未返信サイクル内での通知回数（1始まり）
+  sequence Int
+
+  /// 【二重通知防止】同一サイクル・同一段階の通知を物理的に1件に制限する冪等キー
+  dedupeKey String @unique
+
+  scheduledFor     DateTime
+  /// 通知時点の未返信経過（分）
+  unrepliedMinutes Int
+  status           ReminderStatus @default(PENDING)
+  attempts         Int            @default(0)
+  /// 解決済みの通知先（チャネル種別・宛先・担当者名）
+  targets          Json
+  /// 実際に送った本文（監査用）
+  bodyText         String
+  sentAt           DateTime?
+  error            String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([conversationId, createdAt])
+  @@index([status, scheduledFor])
+  @@index([createdAt])
+  @@map("reminders")
+}
+
+// ---------------------------------------------------------------------------
+// 設定
+// ---------------------------------------------------------------------------
+
+/// シングルトン設定（id = 1 固定）
+model AppSettings {
+  id       Int    @id @default(1)
+  timezone String @default("Asia/Tokyo")
+
+  /// 既定のリマインド間隔（分）。60 / 120 / 180 / 0=通知しない
+  defaultReminderIntervalMinutes Int @default(60)
+  /// 初回リマインドまでの待ち時間（分）
+  firstReminderDelayMinutes      Int @default(60)
+  /// 1サイクルあたりの最大通知回数（0 = 無制限）
+  maxRemindersPerCycle           Int @default(0)
+
+  /// 営業時間。{"mon":{"enabled":true,"open":"09:00","close":"20:00"}, ...}
+  businessHours          Json
+  /// 営業時間を尊重する（false なら24時間通知）
+  respectBusinessHours   Boolean @default(true)
+  /// 祝日も営業する
+  openOnPublicHolidays   Boolean @default(false)
+  /// 経過時間を営業時間のみでカウントする（false = 実時間）
+  countBusinessHoursOnly Boolean @default(false)
+
+  /// 【保険】firstUnrepliedAt からこの分数を超えたら、起点リセットに関係なく強制通知
+  maxSilenceGuardMinutes Int @default(180)
+  /// 配信予定を過ぎてこの分数以上滞留したら異常とみなし要確認＋管理者通知
+  watchdogDelayMinutes   Int @default(20)
+
+  /// 通知本文に顧客メッセージを含めるか
+  includeMessageBodyInNotification Boolean @default(true)
+  /// 通知本文に載せるメッセージの最大文字数
+  messageExcerptLength             Int     @default(60)
+
+  /// メッセージ保持期間（月）。0 = 無期限
+  dataRetentionMonths Int @default(24)
+
+  updatedAt DateTime @updatedAt
+
+  @@map("app_settings")
+}
+
+/// 祝日・臨時休業日 / 臨時営業日
+model BusinessHoliday {
+  id     String   @id @default(cuid())
+  /// 対象日（タイムゾーンは AppSettings.timezone 基準の暦日）
+  date   DateTime @unique @db.Date
+  name   String
+  /// true にすると「祝日だがこの日は営業する」臨時営業日として扱う
+  isOpen Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([date])
+  @@map("business_holidays")
+}
+
+/// エスカレーション設定
+model EscalationRule {
+  id               String   @id @default(cuid())
+  name             String
+  /// 未返信がこの分数を超えたら発火（firstUnrepliedAt 基準）
+  thresholdMinutes Int      @unique
+  notifyAssignee   Boolean  @default(true)
+  notifyManager    Boolean  @default(false)
+  notifyAdmins     Boolean  @default(false)
+  notifyGroup      Boolean  @default(false)
+  enabled          Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([enabled, thresholdMinutes])
+  @@map("escalation_rules")
+}
+
+/// 社内通知チャネル
+model NotificationChannel {
+  id        String         @id @default(cuid())
+  name      String
+  type      ChannelType
+  /// LINE の groupId / userId、または Webhook URL
+  target    String
+  purpose   ChannelPurpose @default(DEFAULT_GROUP)
+  enabled   Boolean        @default(true)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@index([purpose, enabled])
+  @@map("notification_channels")
+}
+
+// ---------------------------------------------------------------------------
+// 冪等性・監査
+// ---------------------------------------------------------------------------
+
+/// LINE Webhook の冪等性担保。再送された同一イベントを無視するために使う
+model WebhookEvent {
+  id             String    @id @default(cuid())
+  webhookEventId String    @unique
+  eventType      String
+  receivedAt     DateTime  @default(now())
+  processedAt    DateTime?
+  isRedelivery   Boolean   @default(false)
+  raw            Json
+
+  @@index([receivedAt])
+  @@map("webhook_events")
+}
+
+/// 操作監査ログ
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actorLabel String
+  action     String
+  targetType String
+  targetId   String?
+  detail     Json?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([targetType, targetId])
+  @@map("audit_logs")
+}
+
+/// Cron の死活記録（外部監視から参照する）
+model CronRun {
+  id         String    @id @default(cuid())
+  job        String
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  claimed    Int       @default(0)
+  sent       Int       @default(0)
+  skipped    Int       @default(0)
+  failed     Int       @default(0)
+  error      String?
+
+  @@index([job, startedAt])
+  @@map("cron_runs")
+}
