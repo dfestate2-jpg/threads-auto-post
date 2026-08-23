@@ -59,8 +59,11 @@ jobs:
           POSTGRES_DB: reminder_test
         ports:
           - 5432:5432
+        # -U/-d を明示しないと healthcheck が root ユーザーで接続を試み、
+        # コンテナログに FATAL: role "root" does not exist が並んで紛らわしい
+        # （pg_isready 自体は応答があれば成功するため、CI は通っていた）
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d reminder_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
