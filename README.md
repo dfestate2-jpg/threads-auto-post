@@ -91,7 +91,7 @@
 | 定期実行 | Netlify Scheduled Functions（既定）/ Vercel Cron / GitHub Actions（要手動有効化）|
 | 社内通知 | **Slack Incoming Webhook（採用）** ／ Discord・LINE WORKS・Google Chat ／ LINE push（グループ・個人）も選択可 |
 | 認証 | scrypt + HMAC署名付き HttpOnly Cookie（外部依存なし） |
-| テスト | Vitest（77ケース）＋ 実DB結合確認スクリプト（10シナリオ） |
+| テスト | Vitest（77ケース）＋ 実DB結合確認スクリプト（10シナリオ）。GitHub Actions で自動実行 |
 
 **月額運用コスト：¥0（Netlify + Supabase 無料枠 + Slack通知）〜 約¥5,000**
 社内通知を Slack にしたことで、社内リマインド分（想定1,500通/月）の LINE 通数はゼロ。
@@ -112,8 +112,8 @@ cp .env.example .env
 #    INTERNAL_SLACK_WEBHOOK_URL / CRON_SECRET / SESSION_SECRET を設定
 
 # 3. データベース
-npx prisma migrate deploy
-npm run seed        # 設定・エスカレーション・祝日・管理者ユーザー
+npx prisma migrate deploy   # 本番デプロイ時は build:deploy が自動実行するため不要
+npm run seed                # 設定・エスカレーション・祝日・管理者ユーザー（初回のみ）
 
 # 4. 起動
 npm run dev         # http://localhost:3000
@@ -126,9 +126,16 @@ LINE Developers の Webhook URL に `https://<host>/api/line/webhook` を設定�
 
 ## 動作確認
 
+PR と `main` への push で GitHub Actions が自動実行する（`.github/workflows/ci.yml`）。
+PostgreSQL のサービスコンテナを立てて結合確認まで流すため、行ロックや冪等キーに依存する
+中核の保証もCIで担保される。
+
+手元で実行する場合:
+
 ```bash
 npm test                                          # 判定ロジック 77ケース
 npm run typecheck                                 # 型チェック
+npm run build                                     # 本番ビルド（DB不要）
 DATABASE_URL=postgresql://... npx tsx scripts/e2e-check.ts   # 実DBでの結合確認 10シナリオ
 ```
 

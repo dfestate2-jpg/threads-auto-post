@@ -1,5 +1,9 @@
 [build]
-  command = "npm run build"
+  # build:deploy = prisma migrate deploy && prisma generate && next build
+  # デプロイのたびに未適用のマイグレーションを自動で適用する。
+  # DBに到達できない場合はデプロイを失敗させる（未マイグレーションのDBに
+  # 対してアプリが公開されるより、デプロイが止まるほうが安全なため）。
+  command = "npm run build:deploy"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"

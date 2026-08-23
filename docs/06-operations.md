@@ -114,15 +114,27 @@ curl -X POST https://<host>/api/cron/reminders -H "x-cron-secret: $CRON_SECRET"
 
 ### 2-D. マイグレーションと初期データ
 
+**マイグレーションはデプロイのたびに自動で適用される。** 手動実行は不要。
+
+Netlify / Vercel のビルドコマンドが `npm run build:deploy`
+（= `prisma migrate deploy && prisma generate && next build`）になっているため、
+新しいマイグレーションがあればデプロイ時に適用される。
+DBに到達できない場合はデプロイ自体が失敗する。未マイグレーションのDBに対して
+アプリが公開されるより、デプロイが止まるほうが安全なためこの挙動にしている。
+
+初期データの投入だけは**初回に1度、手元から実行する**。
+
 ```bash
-npx prisma migrate deploy    # スキーマ適用
-npm run seed                 # 設定・エスカレーション・祝日・管理者ユーザー
+export DATABASE_URL="postgresql://...?sslmode=require"
+export SEED_ADMIN_EMAIL="あなたのメールアドレス"
+export SEED_ADMIN_PASSWORD="10文字以上の英数字"
+npm run seed     # 設定・エスカレーション・祝日・通知チャネル・管理者ユーザー
 ```
 
-`seed` は `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` から初期管理者を作成する。
-**ログイン後、必ずパスワードを変更すること。**
+`seed` は upsert で書くため何度実行しても安全だが、管理者パスワードを環境変数に
+置き続ける必要があるため自動実行はしていない。**ログイン後、必ずパスワードを変更すること。**
 
----
+> 自前のサーバー・Docker で運用する場合は、起動前に `npx prisma migrate deploy` を実行する。
 
 ## 3. 導入後の初期設定（管理画面）
 
@@ -170,6 +182,20 @@ Cron が停止すると通知が完全に止まる。**これが本システム�
 ---
 
 ## 6. 動作確認
+
+### CI（自動）
+
+`.github/workflows/ci.yml` により、PR と `main` への push で以下が自動実行される。
+
+| ジョブ | 内容 |
+|--------|------|
+| `typecheck / test / build` | 型チェック・ユニットテスト77ケース・本番ビルド（DB不要） |
+| `integration (PostgreSQL)` | PostgreSQL 16 のサービスコンテナを立ててマイグレーションを適用し、結合確認10シナリオを実行 |
+
+結合確認をCIに含めているのは、本システムの中核である「二重通知しない」「通知漏れしない」
+「返信済みなら止まる」が行ロック・UNIQUE制約・トランザクションに依存しており、
+モックでは検証できないため。通知はローカルの受信サーバーへ送るので、
+CIから LINE / Slack へ接続は発生しない。
 
 ### ユニットテスト（判定ロジック）
 

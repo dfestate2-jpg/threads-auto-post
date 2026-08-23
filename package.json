@@ -3,10 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "description": "公式LINEの未返信を検知し社内LINEへリマインドするシステム",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
+    "build:deploy": "prisma migrate deploy && npm run build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
