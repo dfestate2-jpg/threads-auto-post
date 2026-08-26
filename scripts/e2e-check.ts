@@ -17,6 +17,13 @@ import { DEFAULT_BUSINESS_HOURS } from '../src/lib/domain/businessHours'
 import { loadPolicyContext } from '../src/lib/services/context'
 import { recordInboundMessage, recordOutboundMessage } from '../src/lib/services/conversation'
 import { runReminderJob } from '../src/lib/services/reminderRunner'
+import { applyQuickAction } from '../src/lib/services/quickAction'
+import { buildResolveActionData } from '../src/lib/line/quickAction'
+
+// このスクリプトは DATABASE_URL だけで動くようにする。
+// ボタンの署名鍵は本番と同じ経路（env.quickActionSecret）で参照されるため、未設定なら検証用の値を入れる。
+process.env.SESSION_SECRET ??= 'e2e-session-secret'
+process.env.QUICK_ACTION_SECRET ??= 'e2e-quick-action-secret'
 
 const prisma = new PrismaClient()
 const PORT = 4599
@@ -254,6 +261,82 @@ async function main(): Promise<void> {
     check('営業時間外には送られない', nightRun.sent === 0, nightRun)
     const morningRun = await runReminderJob(new Date('2026-08-25T00:05:00Z')) // JST 9:05
     check('翌営業日の朝に送られる', morningRun.sent === 1, morningRun)
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑪ 社内LINE通知の「対応済みにする」ボタン')
+    await reset()
+    await prisma.appSettings.update({ where: { id: 1 }, data: { respectBusinessHours: false } })
+    await prisma.notificationChannel.create({
+      data: { name: '社内LINEグループ', type: ChannelType.LINE_GROUP, target: 'Ginternal', purpose: ChannelPurpose.DEFAULT_GROUP },
+    })
+    const staff = await prisma.staff.create({
+      data: { name: '社内担当', email: 'quickaction@example.test', lineUserId: 'Ustaff-quick' },
+    })
+
+    await inbound('Ucustomer8', 'ボタン確認です', T0, 'msg-8a')
+    const conv8 = await prisma.conversation.findFirstOrThrow({ where: { customer: { lineUserId: 'Ucustomer8' } } })
+    const cycle8 = conv8.firstUnrepliedAt!.getTime()
+    const secret = process.env.QUICK_ACTION_SECRET ?? process.env.SESSION_SECRET!
+    const data8 = buildResolveActionData({ customerId: conv8.customerId, cycleId: cycle8 }, secret)!
+
+    // 部外者（社内グループでも担当者でもない）のタップは受け付けない
+    const outsider = await applyQuickAction(
+      { data: data8, source: { type: 'user', userId: 'Uoutsider' } },
+      await loadPolicyContext(T0),
+    )
+    check('社外・未登録アカウントのタップは拒否される', outsider.status === 'FORBIDDEN', outsider.status)
+    check(
+      '拒否されたので未返信のまま',
+      (await prisma.conversation.findUniqueOrThrow({ where: { id: conv8.id } })).replyState === ReplyState.AWAITING,
+    )
+
+    // 署名が壊れたデータは無視する
+    const forged = await applyQuickAction(
+      { data: `${data8.slice(0, -1)}X`, source: { type: 'group', groupId: 'Ginternal', userId: staff.lineUserId! } },
+      await loadPolicyContext(T0),
+    )
+    check('署名が改ざんされたデータは無視される', forged.status === 'INVALID', forged.status)
+
+    // 社内グループからのタップで対応済みになる
+    const tapped = await applyQuickAction(
+      { data: data8, source: { type: 'group', groupId: 'Ginternal', userId: staff.lineUserId! } },
+      await loadPolicyContext(T0),
+    )
+    check('社内グループからのタップで対応済みになる', tapped.status === 'RESOLVED', tapped)
+    const conv8b = await prisma.conversation.findUniqueOrThrow({ where: { id: conv8.id } })
+    check('返信済みに遷移する', conv8b.replyState === ReplyState.REPLIED, conv8b.replyState)
+    check('リマインド予定が消える', conv8b.nextReminderAt === null, conv8b.nextReminderAt)
+    check('解決経路がボタン操作として記録される', conv8b.resolvedVia === ResolvedVia.LINE_POSTBACK, conv8b.resolvedVia)
+    check(
+      '対応履歴に押した担当者が残る',
+      (await prisma.message.count({ where: { conversationId: conv8.id, sentByStaffId: staff.id } })) === 1,
+    )
+
+    // 二度押ししても二重処理にならない
+    const twice = await applyQuickAction(
+      { data: data8, source: { type: 'group', groupId: 'Ginternal', userId: staff.lineUserId! } },
+      await loadPolicyContext(T0),
+    )
+    check('二度押ししても二重処理にならない', twice.status === 'ALREADY_RESOLVED', twice.status)
+
+    // 対応済み後はリマインドが1通も出ない
+    let afterTap = 0
+    for (let m = 60; m <= 600; m += 30) afterTap += (await runReminderJob(new Date(T0.getTime() + m * MIN))).sent
+    check('対応済み後はリマインドが1通も出ない', afterTap === 0, afterTap)
+
+    // 古い通知のボタンで、新しい未返信を閉じてしまわないこと。
+    // ボタン操作は「今」記録されるため、次の問い合わせもそれより後の時刻で発生させる。
+    await inbound('Ucustomer8', '追加の問い合わせです', new Date(Date.now() + 5 * MIN), 'msg-8b')
+    const stale = await applyQuickAction(
+      { data: data8, source: { type: 'group', groupId: 'Ginternal', userId: staff.lineUserId! } },
+      await loadPolicyContext(T0),
+    )
+    check('古い通知のボタンでは新しい未返信を閉じられない', stale.status === 'STALE_CYCLE', stale.status)
+    check(
+      '新しい未返信は未返信のまま残る',
+      (await prisma.conversation.findUniqueOrThrow({ where: { id: conv8.id } })).replyState === ReplyState.AWAITING,
+    )
+
   } finally {
     server.close()
     await prisma.$disconnect()

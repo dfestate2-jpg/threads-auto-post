@@ -28,6 +28,14 @@ export const env = {
   get lineNotifyAccessToken() {
     return optional('LINE_NOTIFY_CHANNEL_ACCESS_TOKEN') ?? required('LINE_CHANNEL_ACCESS_TOKEN')
   },
+  /**
+   * 社内通知Botを別チャネルで運用する場合のチャネルシークレット。
+   * 「対応済みにする」ボタンの postback はそのチャネルの Webhook に届くため、
+   * 署名検証をこちらでも行えるようにする。
+   */
+  get lineNotifyChannelSecret() {
+    return optional('LINE_NOTIFY_CHANNEL_SECRET')
+  },
   /** 社内通知の既定チャネル（Slack Incoming Webhook）。Slack 運用時はこちらを使う */
   get internalSlackWebhookUrl() {
     return optional('INTERNAL_SLACK_WEBHOOK_URL')
@@ -44,6 +52,13 @@ export const env = {
   },
   get sessionSecret() {
     return required('SESSION_SECRET')
+  },
+  /**
+   * 社内LINE通知のワンタップ操作（postback）に付ける署名の鍵。
+   * 未設定ならセッション鍵を流用する。鍵を変えると発行済みボタンは無効になる。
+   */
+  get quickActionSecret() {
+    return optional('QUICK_ACTION_SECRET') ?? required('SESSION_SECRET')
   },
   get ingestSecret() {
     return optional('INGEST_SECRET')

@@ -20,7 +20,8 @@ import { computeNextReminderAt, isAwaitingReply } from '@/lib/domain/reminderSch
 import { addBusinessMinutes } from '@/lib/domain/businessHours'
 import { addMinutes, diffMinutes } from '@/lib/domain/time'
 import { env } from '@/lib/env'
-import { dispatchFallback, dispatchNotification } from '@/lib/notify/dispatcher'
+import { dispatchFallback, dispatchNotification, type QuickActionOptions } from '@/lib/notify/dispatcher'
+import { buildResolveActionData } from '@/lib/line/quickAction'
 import { prisma } from '@/lib/prisma'
 import { loadPolicyContext } from './context'
 import { loadNotifyDirectory, type NotifyDirectory } from './notifyTargets'
@@ -214,6 +215,29 @@ async function processConversation(
     excerptLength: settings.messageExcerptLength,
   })
 
+  /**
+   * 社内LINE通知に付ける「対応済みにする」ボタン。
+   * 公式LINEのチャット画面から返信しても Webhook には届かない（LINE仕様）ため、
+   * 営業担当の工数を「タップ1回」にするための経路。
+   * cycleStart を署名付きで埋めているので、**古い通知のボタンでは今の未返信を閉じられない**。
+   * 署名鍵の未設定などで作れなかった場合はボタン無しで通知する（通知は絶対に止めない）。
+   */
+  let quick: QuickActionOptions | undefined
+  try {
+    const data = buildResolveActionData(
+      { customerId: customer.id, cycleId: cycleStart.getTime() },
+      env.quickActionSecret,
+    )
+    if (data) {
+      quick = {
+        prompt: '返信済みの場合はこちらをタップしてください',
+        actions: [{ label: '✅ 対応済みにする', data, displayText: '対応済みにする' }],
+      }
+    }
+  } catch (e) {
+    console.warn('[reminder] quick action の生成に失敗（ボタン無しで通知します）', String(e))
+  }
+
   // 通知先がひとつも解決できない = 設定不備。黙って消えないよう記録して要確認にする
   if (targets.length === 0) {
     await prisma.reminder.upsert({
@@ -306,7 +330,7 @@ async function processConversation(
     throw e
   }
 
-  const { results, anySucceeded } = await dispatchNotification(targets, bodyText)
+  const { results, anySucceeded } = await dispatchNotification(targets, bodyText, quick)
 
   if (!anySucceeded) {
     const reminder = await prisma.reminder.update({

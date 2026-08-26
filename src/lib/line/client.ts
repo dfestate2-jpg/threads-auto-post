@@ -49,6 +49,49 @@ export async function pushTextMessage(accessToken: string, to: string, text: str
   })
 }
 
+/** ボタンテンプレートで使う postback アクション */
+export interface LinePostbackAction {
+  label: string
+  data: string
+  displayText?: string
+}
+
+/**
+ * 本文テキスト＋ボタンを **1リクエスト** で送る。
+ *
+ * LINE の課金は「リクエスト単位 × 宛先人数」なので、2メッセージ束ねても
+ * 消費通数は増えない。ボタンテンプレートの text は160文字までという制限があり
+ * 通知本文（数百文字）を入れられないため、本文はテキストメッセージ側に置く。
+ */
+export async function pushTextWithActions(
+  accessToken: string,
+  to: string,
+  text: string,
+  prompt: string,
+  actions: LinePostbackAction[],
+): Promise<void> {
+  const buttons = actions.slice(0, 4).map((a) => ({
+    type: 'postback',
+    label: a.label.slice(0, 20),
+    data: a.data,
+    ...(a.displayText ? { displayText: a.displayText.slice(0, 300) } : {}),
+  }))
+  await call('/message/push', accessToken, {
+    method: 'POST',
+    body: {
+      to,
+      messages: [
+        { type: 'text', text: text.slice(0, 4900) },
+        {
+          type: 'template',
+          altText: prompt.slice(0, 400),
+          template: { type: 'buttons', text: prompt.slice(0, 160), actions: buttons },
+        },
+      ],
+    },
+  })
+}
+
 /**
  * reply メッセージ（無料）。replyToken は約1分・1回のみ有効。
  * 期限切れの場合は呼び出し側で push にフォールバックする。

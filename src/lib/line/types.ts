@@ -23,6 +23,8 @@ export interface LineWebhookEvent {
   deliveryContext?: { isRedelivery: boolean }
   replyToken?: string
   message?: LineMessageContent
+  /** 社内LINE通知のボタンを押したときに返ってくる */
+  postback?: { data?: string; params?: Record<string, string> }
   /** LINE Module Channel 等の拡張で送信メッセージを通知する場合に使う */
   sendingMessage?: LineMessageContent
 }

@@ -51,6 +51,24 @@ Slack ではなく社内LINEグループへ通知したい場合のみ実施す�
 > 5人のグループへ1通送ると5通消費するため、想定 1,500通/月 が課金対象になる。
 > 詳細は [01-requirements.md](./01-requirements.md#5-1-社内通知チャネルの選定とメッセージ通数)。
 
+6. チャネル②を使う場合は、そのチャネルの Webhook URL を本システムの `/api/line/webhook` に向け、
+   チャネルシークレットを `LINE_NOTIFY_CHANNEL_SECRET` に設定する
+   （「対応済みにする」ボタンのタップはチャネル②の Webhook に届くため）
+
+#### 「対応済みにする」ボタン
+
+社内通知先が LINE の場合、リマインド通知の直下に `✅ 対応済みにする` ボタンが自動で付く。
+**公式LINEのチャット画面で返信 → 社内LINEの通知をタップ** という運用にすれば、
+管理画面を開かずに対応済みへ遷移できる。
+
+- タップを受け付けるのは、**社内通知グループ**（`INTERNAL_LINE_GROUP_ID` または通知チャネルに登録した LINE 宛先）と、
+  **担当者として LINE ユーザーIDを登録済みのアカウント**のみ
+- ボタンのデータは HMAC 署名付き（鍵は `QUICK_ACTION_SECRET`、未設定なら `SESSION_SECRET` を流用）
+- 通知時点の未返信サイクルを埋め込んであるため、**古い通知のボタンでは新しい未返信を閉じられない**
+- 押し忘れてもリマインドは鳴り続ける（＝ 見逃しにはならない）
+
+詳細は [07-line-reply-detection.md](./07-line-reply-detection.md)。
+
 ### 1-3. データベース
 
 [Supabase](https://supabase.com/) または [Neon](https://neon.tech/) で PostgreSQL を作成し、

@@ -83,6 +83,7 @@ enum ResolvedVia {
   MANUAL /// 管理画面で「対応済み」に変更した
   INGEST_API /// 外部連携から返信を取り込んだ
   WEBHOOK /// LINE Webhook 由来の送信イベント（Module Channel 等）
+  LINE_POSTBACK /// 社内LINE通知の「対応済みにする」ボタンをタップした
 }
 
 // ---------------------------------------------------------------------------

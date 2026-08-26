@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server'
 
-import { getProfile } from '@/lib/line/client'
+import { getProfile, replyTextMessage } from '@/lib/line/client'
 import { verifyLineSignature } from '@/lib/line/signature'
 import type { LineWebhookBody, LineWebhookEvent } from '@/lib/line/types'
 import { env } from '@/lib/env'
 import { prisma } from '@/lib/prisma'
 import { loadPolicyContext } from '@/lib/services/context'
 import { recordInboundMessage, recordOutboundMessage } from '@/lib/services/conversation'
+import { applyQuickAction } from '@/lib/services/quickAction'
 import { ResolvedVia } from '@prisma/client'
 import type { PolicyContext } from '@/lib/services/policy'
 
@@ -43,7 +44,40 @@ async function resolveProfile(userId: string): Promise<{ displayName?: string | 
   }
 }
 
-async function handleEvent(event: LineWebhookEvent, ctx: PolicyContext): Promise<void> {
+/** 署名の検証に成功したチャネル。応答（reply）に使うトークンを選ぶために使う */
+type ChannelKind = 'MAIN' | 'NOTIFY'
+
+async function ack(event: LineWebhookEvent, channel: ChannelKind, text: string): Promise<void> {
+  if (!event.replyToken) return
+  const token = channel === 'NOTIFY' ? env.lineNotifyAccessToken : env.lineChannelAccessToken
+  // 応答が返せなくても本処理は完了しているので握りつぶす（replyToken は約1分で失効する）
+  await replyTextMessage(token, event.replyToken, text).catch(() => undefined)
+}
+
+/**
+ * 社内LINE通知の「対応済みにする」ボタン。
+ * 判定・状態遷移は services/quickAction 側にあり、ここは応答の出し分けだけを行う。
+ */
+async function handlePostback(event: LineWebhookEvent, channel: ChannelKind, ctx: PolicyContext): Promise<void> {
+  const outcome = await applyQuickAction(
+    { data: event.postback?.data, source: event.source, raw: { source: event.source, postback: event.postback } },
+    ctx,
+  )
+  if (outcome.status === 'INVALID') {
+    // 署名不正は攻撃または鍵のローテーション。応答は返さない
+    console.warn('[line-webhook] postback の署名検証に失敗しました')
+    return
+  }
+  await ack(event, channel, outcome.message)
+}
+
+async function handleEvent(event: LineWebhookEvent, channel: ChannelKind, ctx: PolicyContext): Promise<void> {
+  // 社内グループからのボタン操作を受けるため、1対1トーク限定の判定より前に処理する
+  if (event.type === 'postback') {
+    await handlePostback(event, channel, ctx)
+    return
+  }
+
   const userId = event.source?.userId
   // 1対1トーク以外（グループ/ルーム）は顧客対応の対象外
   if (!userId || event.source.type !== 'user') return
@@ -123,7 +157,20 @@ export async function POST(request: Request): Promise<NextResponse> {
   const rawBody = await request.text()
   const signature = request.headers.get('x-line-signature')
 
-  if (!verifyLineSignature(rawBody, signature, env.lineChannelSecret)) {
+  /**
+   * 社内通知Botを別チャネルで運用している場合、「対応済みにする」ボタンの postback は
+   * そちらのチャネル署名で届く。どちらか一方でも検証できれば受理し、
+   * 応答（reply）には検証できたチャネルのトークンを使う。
+   */
+  let channel: ChannelKind
+  if (verifyLineSignature(rawBody, signature, env.lineChannelSecret)) {
+    channel = 'MAIN'
+  } else if (
+    env.lineNotifyChannelSecret &&
+    verifyLineSignature(rawBody, signature, env.lineNotifyChannelSecret)
+  ) {
+    channel = 'NOTIFY'
+  } else {
     console.warn('[line-webhook] signature verification failed')
     return NextResponse.json({ error: 'invalid signature' }, { status: 401 })
   }
@@ -164,7 +211,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         }
       }
 
-      await handleEvent(event, ctx)
+      await handleEvent(event, channel, ctx)
 
       if (event.webhookEventId) {
         await prisma.webhookEvent
