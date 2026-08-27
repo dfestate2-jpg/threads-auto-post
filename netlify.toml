@@ -12,8 +12,3 @@
 # netlify/functions/reminders-cron.mts が /api/cron/reminders を呼び出す。
 [functions."reminders-cron"]
   schedule = "*/5 * * * *"
-
-# 30分ごとに銀行入金の取り込み → スプレッドシート反映を行う。
-# netlify/functions/bank-deposits-cron.mts が /api/cron/bank-deposits を呼び出す。
-[functions."bank-deposits-cron"]
-  schedule = "*/30 * * * *"
