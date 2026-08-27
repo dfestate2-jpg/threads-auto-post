@@ -78,6 +78,94 @@ export const env = {
   get appBaseUrl() {
     return optional('APP_BASE_URL') ?? ''
   },
+  // --- 銀行入金 → スプレッドシート自動反映 -----------------------------------
+  // 銀行のログイン情報は一切持たない。freee 会計に取り込まれた口座明細を読むだけ。
+  get freeeClientId() {
+    return required('FREEE_CLIENT_ID')
+  },
+  get freeeClientSecret() {
+    return required('FREEE_CLIENT_SECRET')
+  },
+  /** 初回投入用のリフレッシュトークン。以降の値はDBが持つ（ローテーションするため） */
+  get freeeRefreshTokenSeed() {
+    return optional('FREEE_REFRESH_TOKEN')
+  },
+  get freeeCompanyId() {
+    const raw = required('FREEE_COMPANY_ID')
+    const value = Number(raw)
+    if (!Number.isInteger(value)) throw new Error('FREEE_COMPANY_ID は数値で指定してください')
+    return value
+  },
+  /** 対象の銀行口座ID（カンマ区切り）。未設定なら事業所の全銀行口座が対象 */
+  get freeeWalletableIds(): number[] {
+    const raw = optional('FREEE_WALLETABLE_IDS')
+    if (!raw) return []
+    return raw
+      .split(',')
+      .map((v) => Number(v.trim()))
+      .filter((v) => Number.isInteger(v))
+  },
+
+  get googleServiceAccountEmail() {
+    return required('GOOGLE_SERVICE_ACCOUNT_EMAIL')
+  },
+  get googlePrivateKey() {
+    return required('GOOGLE_PRIVATE_KEY')
+  },
+  get depositSpreadsheetId() {
+    return required('DEPOSIT_SPREADSHEET_ID')
+  },
+  /** 月次シートを新規作成するときの複製元。既存ブックの「コピー」シート */
+  get depositTemplateSheetTitle() {
+    return optional('DEPOSIT_TEMPLATE_SHEET_TITLE') ?? 'コピー'
+  },
+  /** 月次シート（yyyyMM）ではなく固定シートに書きたい場合に指定する */
+  get depositFixedSheetTitle() {
+    return optional('DEPOSIT_SHEET_TITLE')
+  },
+  /**
+   * この日付より前の入金は取り込まない（yyyy-MM-dd）。
+   * **導入時に手入力済みの行と重複させないための唯一の砦**なので必須にしている。
+   */
+  get depositSyncStartDate() {
+    const raw = required('DEPOSIT_SYNC_START_DATE')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      throw new Error('DEPOSIT_SYNC_START_DATE は yyyy-MM-dd 形式で指定してください')
+    }
+    return raw
+  },
+  /** 毎回さかのぼって確認する日数。銀行の反映遅れ・訂正を拾うための余白 */
+  get depositLookbackDays() {
+    const value = Number(optional('DEPOSIT_LOOKBACK_DAYS') ?? '14')
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 14
+  },
+  /** これ未満の入金は記録しない（利息の数円などを弾く） */
+  get depositMinAmount() {
+    const value = Number(optional('DEPOSIT_MIN_AMOUNT') ?? '1')
+    return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 1
+  },
+  get depositTimezone() {
+    return optional('DEPOSIT_TIMEZONE') ?? 'Asia/Tokyo'
+  },
+  /** 法人格の略号の扱い: strip（既定・"カ)タマホーム"→"タマホーム"）/ expand / keep */
+  get depositCorporateMode(): 'strip' | 'expand' | 'keep' {
+    const raw = optional('DEPOSIT_CORPORATE_MODE')
+    return raw === 'expand' || raw === 'keep' ? raw : 'strip'
+  },
+  /** 同じ入金日が続くとき2行目以降の日付を空欄にする（既存の手入力に合わせる） */
+  get depositOmitRepeatedDate() {
+    return (optional('DEPOSIT_OMIT_REPEATED_DATE') ?? '1') !== '0'
+  },
+  /** 1回の実行で追記する最大行数（暴走時の被害を限定する） */
+  get depositMaxRowsPerRun() {
+    const value = Number(optional('DEPOSIT_MAX_ROWS_PER_RUN') ?? '200')
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 200
+  },
+  /** 0 を指定すると同期を止める（障害時の緊急停止用） */
+  get depositSyncEnabled() {
+    return (optional('DEPOSIT_SYNC_ENABLED') ?? '1') !== '0'
+  },
+
   get isProduction() {
     return process.env.NODE_ENV === 'production'
   },

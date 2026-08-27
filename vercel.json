@@ -5,6 +5,10 @@
     {
       "path": "/api/cron/reminders",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/bank-deposits",
+      "schedule": "*/30 * * * *"
     }
   ]
 }

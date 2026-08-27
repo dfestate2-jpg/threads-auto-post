@@ -1,0 +1,46 @@
+# ホスティング側にスケジューラが無い場合の「代替」入金同期の起動手段。
+#
+# 【既定では自動実行しない】
+# 推奨構成は Netlify Scheduled Functions（netlify.toml）または
+# Vercel Cron（vercel.json）であり、そちらを使う場合このワークフローは不要。
+#
+# 【有効化する手順】
+#  1. リポジトリの Settings > Secrets and variables > Actions に
+#     APP_BASE_URL（例: https://example.netlify.app）と CRON_SECRET を登録する
+#  2. 下の `schedule:` のコメントを外す
+name: bank-deposits-cron
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '*/30 * * * *'
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      # Secrets 未設定のまま起動された場合に、原因が分かる形で失敗させる。
+      # 「入金がシートに載っていないのにCIは緑」という状態を作らないため。
+      - name: Check required secrets
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          missing=""
+          [ -n "$APP_BASE_URL" ] || missing="$missing APP_BASE_URL"
+          [ -n "$CRON_SECRET" ] || missing="$missing CRON_SECRET"
+          if [ -n "$missing" ]; then
+            echo "::error::必要な Secrets が未設定です:$missing"
+            echo "Settings > Secrets and variables > Actions に登録してください。"
+            echo "Netlify / Vercel のスケジューラを使う場合、このワークフローは不要です。"
+            exit 1
+          fi
+
+      - name: Trigger deposit sync job
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -sS -X POST "${APP_BASE_URL%/}/api/cron/bank-deposits" \
+            -H "x-cron-secret: ${CRON_SECRET}" \
+            --fail-with-body

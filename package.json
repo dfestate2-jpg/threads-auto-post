@@ -19,7 +19,9 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "seed": "tsx prisma/seed.ts",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "freee:auth": "tsx scripts/freee-authorize.ts",
+    "deposit:dry-run": "tsx scripts/deposit-dry-run.ts"
   },
   "dependencies": {
     "@prisma/client": "6.2.1",
