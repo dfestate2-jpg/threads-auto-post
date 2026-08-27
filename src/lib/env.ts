@@ -44,6 +44,18 @@ export const env = {
   get internalLineGroupId() {
     return optional('INTERNAL_LINE_GROUP_ID')
   },
+  /**
+   * Lステップの「Webhook転送」の受け口で使う共有トークン。
+   * 転送時に x-line-signature が付いてこない場合の認証経路。
+   * 未設定なら、署名が検証できる転送しか受け付けない。
+   */
+  get lstepRelayToken() {
+    return optional('LSTEP_RELAY_TOKEN')
+  },
+  /** 導入直後の疎通確認用。転送されたリクエストの「形」だけをログに出す（値は出さない） */
+  get lstepRelayDebug() {
+    return optional('LSTEP_RELAY_DEBUG') === '1'
+  },
   get fallbackWebhookUrl() {
     return optional('FALLBACK_WEBHOOK_URL')
   },
