@@ -337,6 +337,49 @@ async function main(): Promise<void> {
       (await prisma.conversation.findUniqueOrThrow({ where: { id: conv8.id } })).replyState === ReplyState.AWAITING,
     )
 
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑫ 社内スタッフ本人の発言は顧客として扱わない')
+    await reset()
+    const insider = await prisma.staff.create({
+      data: { name: '営業担当A', email: 'insider@example.test', lineUserId: 'Ustaff-insider' },
+    })
+    const { processLineEvents } = await import('../src/lib/services/lineWebhook')
+    await processLineEvents(
+      [
+        {
+          type: 'message',
+          timestamp: T0.getTime(),
+          source: { type: 'user', userId: insider.lineUserId! },
+          webhookEventId: 'evt-insider-1',
+          message: { id: 'msg-insider', type: 'text', text: 'テスト送信' },
+        },
+      ],
+      'MAIN',
+      await loadPolicyContext(T0),
+      T0.getTime(),
+    )
+    check('顧客として登録されない', (await prisma.customer.count({ where: { lineUserId: insider.lineUserId! } })) === 0)
+    check('未返信の会話が作られない', (await prisma.conversation.count()) === 0)
+
+    // 社外の人は今までどおり顧客として扱う
+    await processLineEvents(
+      [
+        {
+          type: 'message',
+          timestamp: T0.getTime(),
+          source: { type: 'user', userId: 'Uoutside-customer' },
+          webhookEventId: 'evt-outsider-1',
+          message: { id: 'msg-outsider', type: 'text', text: 'お問い合わせです' },
+        },
+      ],
+      'MAIN',
+      await loadPolicyContext(T0),
+      T0.getTime(),
+    )
+    check('社外の人は顧客として登録される', (await prisma.customer.count({ where: { lineUserId: 'Uoutside-customer' } })) === 1)
+    check('未返信として追跡される', (await prisma.conversation.count({ where: { replyState: ReplyState.AWAITING } })) === 1)
+
   } finally {
     server.close()
     await prisma.$disconnect()

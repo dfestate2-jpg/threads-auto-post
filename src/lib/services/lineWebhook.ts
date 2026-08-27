@@ -71,6 +71,18 @@ async function handlePostback(event: LineWebhookEvent, channel: ChannelKind, ctx
   await ack(event, channel, outcome.message)
 }
 
+/**
+ * 社内スタッフのLINEユーザーIDかどうか。
+ *
+ * 社内通知を顧客対応と同じ公式アカウントから送る構成では、営業担当自身が
+ * その公式アカウントの友だちになる。そのまま素通しすると
+ * **営業担当の発言が「未返信の顧客」として登録され、自分宛にリマインドが鳴り続ける。**
+ * 顧客として扱ってよいのは社外の人だけなので、入口で弾く。
+ */
+async function isInternalStaff(userId: string): Promise<boolean> {
+  return (await prisma.staff.count({ where: { lineUserId: userId, active: true } })) > 0
+}
+
 async function handleEvent(event: LineWebhookEvent, channel: ChannelKind, ctx: PolicyContext): Promise<void> {
   // 社内グループからのボタン操作を受けるため、1対1トーク限定の判定より前に処理する
   if (event.type === 'postback') {
@@ -81,6 +93,9 @@ async function handleEvent(event: LineWebhookEvent, channel: ChannelKind, ctx: P
   const userId = event.source?.userId
   // 1対1トーク以外（グループ/ルーム）は顧客対応の対象外
   if (!userId || event.source.type !== 'user') return
+
+  // 社内スタッフ本人の発言を顧客の問い合わせとして扱わない
+  if (await isInternalStaff(userId)) return
 
   switch (event.type) {
     case 'message': {
