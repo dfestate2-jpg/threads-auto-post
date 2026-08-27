@@ -194,12 +194,23 @@ postgresql://postgres:あなたのパスワード@db.xxxx.supabase.co:5432/postg
 
 | 名前 | 入れる値 |
 |------|---------|
-| `DATABASE_URL` | 手順02の接続文字列 |
-| `INTERNAL_SLACK_WEBHOOK_URL` | 手順03のSlackのURL |
-| `LINE_CHANNEL_SECRET` | 手順04のチャネルシークレット |
-| `LINE_CHANNEL_ACCESS_TOKEN` | 手順04のアクセストークン |
+| `DATABASE_URL` | 手順02の接続文字列（**Transaction pooler / 6543**） |
+| `DIRECT_URL` | 手順02の接続文字列（**Session pooler / 5432**） |
+| `LINE_CHANNEL_SECRET` | 顧客対応チャネルのチャネルシークレット |
+| `LINE_CHANNEL_ACCESS_TOKEN` | 顧客対応チャネルのアクセストークン |
+| `LINE_NOTIFY_CHANNEL_ACCESS_TOKEN` | 社内通知チャネルのアクセストークン |
+| `LINE_NOTIFY_CHANNEL_SECRET` | 社内通知チャネルのチャネルシークレット |
+| `LSTEP_RELAY_TOKEN` | 自分で作った文字列（Lステップの転送先URLに載せる） |
 | `CRON_SECRET` | 自分で作った文字列 |
 | `SESSION_SECRET` | 自分で作った文字列 |
+| `APP_BASE_URL` | 公開されたサイトのURL（`https://〜.netlify.app`） |
+
+> **`DATABASE_URL` と `DIRECT_URL` はポート番号が違うだけの別物です。**
+> アプリが動くときは接続数を節約できる 6543、台帳の作り直し（マイグレーション）は
+> 5432 を使います。逆にするとデプロイが失敗します。
+
+> Slack を使う構成にする場合のみ `INTERNAL_SLACK_WEBHOOK_URL` を足してください。
+> 今回は社内通知もLINEなので不要です。
 
 登録したら **Deploys** → **Trigger deploy** → **Deploy site** で公開しなおします。
 緑色の **Published** が出れば成功です。
@@ -268,7 +279,8 @@ npm install
 
 # 3. 台帳の場所と、管理者アカウントを指定する
 #    " " の中はご自身の値に置き換えてください
-export DATABASE_URL="手順02の接続文字列"
+export DATABASE_URL="手順02の接続文字列（Transaction pooler / 6543）"
+export DIRECT_URL="手順02の接続文字列（Session pooler / 5432）"
 export SEED_ADMIN_EMAIL="あなたのメールアドレス"
 export SEED_ADMIN_PASSWORD="英数字を混ぜた10文字以上"
 
@@ -282,7 +294,8 @@ npm run seed
 **Windowsの場合** — PowerShellでは `export` が使えません。次のように書き換えてください。
 
 ```powershell
-$env:DATABASE_URL="手順02の接続文字列"
+$env:DATABASE_URL="手順02の接続文字列（Transaction pooler / 6543）"
+$env:DIRECT_URL="手順02の接続文字列（Session pooler / 5432）"
 $env:SEED_ADMIN_EMAIL="あなたのメールアドレス"
 $env:SEED_ADMIN_PASSWORD="英数字を混ぜた10文字以上"
 ```

@@ -9,7 +9,13 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // アプリ実行時の接続。サーバーレスでは接続数を抑えるためプーラー経由にする
+  url       = env("DATABASE_URL")
+  // マイグレーション実行時の接続。
+  // Supabase の Transaction pooler(6543) は Prisma migrate が使う
+  // アドバイザリロックに対応していないため、別経路を指定できるようにしている。
+  // プーラーを使わない環境では DATABASE_URL と同じ値を入れてよい。
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------------------------------------------------------------------------
