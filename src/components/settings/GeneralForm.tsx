@@ -27,6 +27,7 @@ export interface GeneralSettings {
   countBusinessHoursOnly: boolean
   maxSilenceGuardMinutes: number
   watchdogDelayMinutes: number
+  alwaysNotifyDefaultGroup: boolean
   includeMessageBodyInNotification: boolean
   messageExcerptLength: number
 }
@@ -143,6 +144,7 @@ export function GeneralForm({ initial }: { initial: GeneralSettings }) {
             ['respectBusinessHours', '営業時間外はリマインドを停止し、翌営業日に再開する'],
             ['countBusinessHoursOnly', '未返信の経過時間を営業時間だけで数える'],
             ['openOnPublicHolidays', '祝日も営業する'],
+            ['alwaysNotifyDefaultGroup', '担当者が決まっていても、社内共通の通知先へ同報する（事務など担当者以外も返信する場合）'],
             ['includeMessageBodyInNotification', '通知に顧客メッセージの本文を含める'],
           ] as const
         ).map(([key, label]) => (

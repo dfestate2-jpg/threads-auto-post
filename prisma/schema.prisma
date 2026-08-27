@@ -72,7 +72,7 @@ enum ChannelType {
 
 /// 通知チャネルの役割
 enum ChannelPurpose {
-  DEFAULT_GROUP /// 担当者未設定時の社内共通グループ
+  DEFAULT_GROUP /// 社内共通の通知先。担当者未設定時の受け皿であり、同報先でもある
   ADMIN /// 管理者向け（エスカレーション最終段・watchdog）
   FALLBACK /// 主経路が連続失敗したときの代替
 }
@@ -330,6 +330,10 @@ model AppSettings {
   maxSilenceGuardMinutes Int @default(180)
   /// 配信予定を過ぎてこの分数以上滞留したら異常とみなし要確認＋管理者通知
   watchdogDelayMinutes   Int @default(20)
+
+  /// 担当者が設定されていても、社内共通の通知先へ必ず同報する。
+  /// 担当者以外（事務など）が返信することがあるため、既定で有効。
+  alwaysNotifyDefaultGroup Boolean @default(true)
 
   /// 通知本文に顧客メッセージを含めるか
   includeMessageBodyInNotification Boolean @default(true)

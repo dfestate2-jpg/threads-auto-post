@@ -196,6 +196,7 @@ async function processConversation(
     manager,
     admins: directory.admins,
     groupChannels: directory.groupChannels,
+    alwaysIncludeGroup: settings.alwaysNotifyDefaultGroup,
     adminChannels: directory.adminChannels,
     fallbackChannels: directory.fallbackChannels,
   })

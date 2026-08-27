@@ -33,6 +33,7 @@ export default async function SettingsPage() {
     countBusinessHoursOnly: settings.countBusinessHoursOnly,
     maxSilenceGuardMinutes: settings.maxSilenceGuardMinutes,
     watchdogDelayMinutes: settings.watchdogDelayMinutes,
+    alwaysNotifyDefaultGroup: settings.alwaysNotifyDefaultGroup,
     includeMessageBodyInNotification: settings.includeMessageBodyInNotification,
     messageExcerptLength: settings.messageExcerptLength,
   }

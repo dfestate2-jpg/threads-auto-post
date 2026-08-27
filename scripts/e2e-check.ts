@@ -452,6 +452,73 @@ async function main(): Promise<void> {
     check('社内通知チャネルの発言は顧客にならない', (await prisma.customer.count()) === 0)
     check('社内通知チャネルの発言で会話が作られない', (await prisma.conversation.count()) === 0)
 
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑭ 担当者だけでなく社内全員に同報される（事務も返信するため）')
+    await reset()
+    const salesA = await prisma.staff.create({
+      data: { name: '営業A', email: 'sales-a@example.test', lineUserId: 'Usales-a' },
+    })
+    // 社内共通の通知先として「全員」を個別に登録する（LINEグループが使えない構成）
+    for (const [name, target] of [['営業A', 'Usales-a'], ['営業B', 'Usales-b'], ['事務', 'Ujimu']] as const) {
+      await prisma.notificationChannel.create({
+        data: { name, type: ChannelType.LINE_USER, target, purpose: ChannelPurpose.DEFAULT_GROUP },
+      })
+    }
+    const shared = await inbound('Ucustomer9', '内見の予約をしたいです', T0, 'msg-9a')
+    await prisma.customer.update({
+      where: { lineUserId: 'Ucustomer9' },
+      data: { assigneeId: salesA.id },
+    })
+    const { rescheduleConversation: reschedule9 } = await import('../src/lib/services/conversation')
+    await reschedule9(shared.conversationId, await loadPolicyContext(T0))
+    await runReminderJob(new Date(T0.getTime() + 61 * MIN))
+
+    const reminder9 = await prisma.reminder.findFirstOrThrow({
+      where: { conversationId: shared.conversationId },
+      orderBy: { createdAt: 'desc' },
+    })
+    const targets9 = (reminder9.targets as { target: string }[]).map((t) => t.target).sort()
+    const lineTargets9 = targets9.filter((t) => t.startsWith('U'))
+    check(
+      '担当者・他の営業・事務の全員に届く',
+      JSON.stringify(lineTargets9) === JSON.stringify(['Ujimu', 'Usales-a', 'Usales-b']),
+      targets9,
+    )
+    check('担当者が共通の通知先にも入っているが二重にならない', targets9.filter((t) => t === 'Usales-a').length === 1)
+
+    // 同報を切ると担当者だけになる
+    await prisma.appSettings.update({ where: { id: 1 }, data: { alwaysNotifyDefaultGroup: false } })
+    await runReminderJob(new Date(T0.getTime() + 121 * MIN))
+    const reminder9b = await prisma.reminder.findFirstOrThrow({
+      where: { conversationId: shared.conversationId },
+      orderBy: { createdAt: 'desc' },
+    })
+    const targets9b = (reminder9b.targets as { target: string }[]).map((t) => t.target)
+    check('設定を切ると担当者だけになる', JSON.stringify(targets9b) === JSON.stringify(['Usales-a']), targets9b)
+    await prisma.appSettings.update({ where: { id: 1 }, data: { alwaysNotifyDefaultGroup: true } })
+
+    // 事務が「対応済み」を押しても止まる（担当者でなくても操作できる）
+    const conv9 = await prisma.conversation.findUniqueOrThrow({ where: { id: shared.conversationId } })
+    const jimu = await prisma.staff.create({
+      data: { name: '事務', email: 'jimu@example.test', lineUserId: 'Ujimu' },
+    })
+    const byJimu = await applyQuickAction(
+      {
+        data: buildResolveActionData(
+          { customerId: conv9.customerId, cycleId: conv9.firstUnrepliedAt!.getTime() },
+          process.env.QUICK_ACTION_SECRET!,
+        )!,
+        source: { type: 'user', userId: jimu.lineUserId! },
+      },
+      await loadPolicyContext(T0),
+    )
+    check('担当者以外（事務）でも対応済みにできる', byJimu.status === 'RESOLVED', byJimu)
+    check(
+      '対応済み後はリマインドが止まる',
+      (await prisma.conversation.findUniqueOrThrow({ where: { id: shared.conversationId } })).nextReminderAt === null,
+    )
+
   } finally {
     server.close()
     await prisma.$disconnect()
