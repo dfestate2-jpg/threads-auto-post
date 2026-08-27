@@ -12,6 +12,7 @@ import { env } from '@/lib/env'
 import { prisma } from '@/lib/prisma'
 import { recordInboundMessage, recordOutboundMessage } from './conversation'
 import { applyQuickAction } from './quickAction'
+import { consumeLinkCode, linkResultMessage } from './staffLink'
 import type { PolicyContext } from './policy'
 
 /** イベントの timestamp がこれ以上ずれていたらリプレイとみなして拒否する */
@@ -83,10 +84,39 @@ async function isInternalStaff(userId: string): Promise<boolean> {
   return (await prisma.staff.count({ where: { lineUserId: userId, active: true } })) > 0
 }
 
+/**
+ * 社内通知チャネル（Bot②）に届いたイベント。
+ *
+ * こちらは**社内専用の連絡口**なので、顧客対応の対象には一切しない。
+ * 素通しすると、社内の人間が「未返信の顧客」として一覧に並んでしまう。
+ * ここで受け付けるのは担当者の連携コードだけ。
+ */
+async function handleInternalChannelEvent(event: LineWebhookEvent): Promise<void> {
+  const userId = event.source?.userId
+  if (!userId || event.source.type !== 'user') return
+
+  if (event.type === 'follow') {
+    await ack(event, 'NOTIFY', '社内通知Botです。管理画面で発行した連携コードを送信してください。')
+    return
+  }
+  if (event.type !== 'message' || event.message?.type !== 'text') return
+
+  const result = await consumeLinkCode(event.message.text, userId)
+  const message = linkResultMessage(result)
+  // コードが含まれていない発言（雑談・スタンプ等）には何も返さない
+  if (message) await ack(event, 'NOTIFY', message)
+}
+
 async function handleEvent(event: LineWebhookEvent, channel: ChannelKind, ctx: PolicyContext): Promise<void> {
   // 社内グループからのボタン操作を受けるため、1対1トーク限定の判定より前に処理する
   if (event.type === 'postback') {
     await handlePostback(event, channel, ctx)
+    return
+  }
+
+  // 社内通知チャネルからのイベントは顧客対応の対象外
+  if (channel === 'NOTIFY') {
+    await handleInternalChannelEvent(event)
     return
   }
 

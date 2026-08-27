@@ -25,6 +25,7 @@ export function StaffTable({ initial }: { initial: StaffRow[] }) {
   const [rows, setRows] = useState(initial)
   const [draft, setDraft] = useState({ name: '', lineUserId: '', role: 'STAFF' as StaffRow['role'] })
   const [msg, setMsg] = useState<string | null>(null)
+  const [codes, setCodes] = useState<Record<string, { display: string; expiresAt: string }>>({})
 
   async function patch(id: string, body: Partial<StaffRow>) {
     const res = await fetch(`/api/staff/${id}`, {
@@ -40,6 +41,17 @@ export function StaffTable({ initial }: { initial: StaffRow[] }) {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...body } : r)))
     setMsg('更新しました')
     router.refresh()
+  }
+
+  async function issueCode(id: string) {
+    const res = await fetch(`/api/staff/${id}/link-code`, { method: 'POST' })
+    const data = (await res.json()) as { error?: string; display?: string; expiresAt?: string }
+    if (!res.ok || !data.display || !data.expiresAt) {
+      setMsg(data.error ?? '連携コードの発行に失敗しました')
+      return
+    }
+    setCodes((prev) => ({ ...prev, [id]: { display: data.display!, expiresAt: data.expiresAt! } }))
+    setMsg(null)
   }
 
   async function create() {
@@ -63,7 +75,9 @@ export function StaffTable({ initial }: { initial: StaffRow[] }) {
     <section className="card p-4">
       <h2 className="mb-1 text-sm font-bold">担当者</h2>
       <p className="mb-4 text-xs text-slate-500">
-        個人LINEへ通知するには、社内通知Botと友だちになったうえで LINEユーザーID を登録してください。未登録の場合は社内共通グループへ通知されます。
+        個人LINEへ通知するには、社内通知Botと友だちになったうえで LINEユーザーID を登録してください。未登録の場合は社内共通の通知先へ送られます。
+        <br />
+        IDは33文字あり書き写すと間違えるため、<strong>「連携コード」を発行して本人に社内通知Botへ送ってもらう</strong>のが確実です。
       </p>
 
       <div className="overflow-x-auto">
@@ -72,6 +86,7 @@ export function StaffTable({ initial }: { initial: StaffRow[] }) {
             <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
               <th className="py-2">氏名</th>
               <th>LINEユーザーID</th>
+              <th>LINE連携</th>
               <th>役割</th>
               <th>責任者</th>
               <th className="text-center">通知</th>
@@ -97,6 +112,23 @@ export function StaffTable({ initial }: { initial: StaffRow[] }) {
                       e.target.value !== (r.lineUserId ?? '') && patch(r.id, { lineUserId: e.target.value || null })
                     }
                   />
+                </td>
+                <td className="pr-2 whitespace-nowrap">
+                  {(() => {
+                    const issued = codes[r.id]
+                    return issued ? (
+                      <div>
+                        <span className="font-mono text-sm font-bold tracking-widest">{issued.display}</span>
+                        <div className="text-[11px] text-slate-500">
+                          社内通知Botへ送信（{new Date(issued.expiresAt).toLocaleString('ja-JP')}まで）
+                        </div>
+                      </div>
+                    ) : (
+                      <button className="btn-secondary text-xs" onClick={() => issueCode(r.id)}>
+                        {r.lineUserId ? 'コード再発行' : '連携コード発行'}
+                      </button>
+                    )
+                  })()}
                 </td>
                 <td className="pr-2">
                   <select className="input w-28" value={r.role} onChange={(e) => patch(r.id, { role: e.target.value as StaffRow['role'] })}>

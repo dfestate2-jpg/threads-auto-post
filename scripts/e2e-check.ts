@@ -380,6 +380,78 @@ async function main(): Promise<void> {
     check('社外の人は顧客として登録される', (await prisma.customer.count({ where: { lineUserId: 'Uoutside-customer' } })) === 1)
     check('未返信として追跡される', (await prisma.conversation.count({ where: { replyState: ReplyState.AWAITING } })) === 1)
 
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑬ 担当者のLINE連携コード（社内通知チャネル）')
+    await reset()
+    const { issueLinkCode, consumeLinkCode } = await import('../src/lib/services/staffLink')
+    const { hashLinkCode } = await import('../src/lib/domain/linkCode')
+    const target = await prisma.staff.create({ data: { name: '営業担当B', email: 'link@example.test' } })
+
+    const issued = await issueLinkCode(target.id, T0)
+    check('平文コードはDBに保存されない', (await prisma.staffLinkCode.count({ where: { codeHash: issued.code } })) === 0)
+    check('ハッシュで保存される', (await prisma.staffLinkCode.count({ where: { codeHash: hashLinkCode(issued.code) } })) === 1)
+
+    const wrong = await consumeLinkCode('ZZZZ9999', 'Ustaff-B', T0)
+    check('存在しないコードは紐づかない', wrong.status === 'NOT_FOUND', wrong.status)
+
+    const chat = await consumeLinkCode('おつかれさまです', 'Ustaff-B', T0)
+    check('コードを含まない発言には反応しない', chat.status === 'NO_CODE', chat.status)
+
+    const linked = await consumeLinkCode(`登録 ${issued.code}`, 'Ustaff-B', T0)
+    check('本文にコードが混ざっていても紐づく', linked.status === 'LINKED', linked)
+    check(
+      'LINEユーザーIDが担当者に登録される',
+      (await prisma.staff.findUniqueOrThrow({ where: { id: target.id } })).lineUserId === 'Ustaff-B',
+    )
+
+    const reused = await consumeLinkCode(issued.code, 'Uattacker', T0)
+    check('使用済みコードは再利用できない', reused.status === 'ALREADY_USED', reused.status)
+    check(
+      '再利用が拒否されても登録は書き換わらない',
+      (await prisma.staff.findUniqueOrThrow({ where: { id: target.id } })).lineUserId === 'Ustaff-B',
+    )
+
+    const expiredIssue = await issueLinkCode(target.id, new Date(T0.getTime() - 48 * 60 * MIN))
+    const expired = await consumeLinkCode(expiredIssue.code, 'Ustaff-B', T0)
+    check('期限切れコードは紐づかない', expired.status === 'EXPIRED', expired.status)
+
+    // 別の担当者が、既に他人が使っているLINEアカウントで登録しようとした場合
+    const other = await prisma.staff.create({ data: { name: '営業担当C', email: 'link2@example.test' } })
+    const otherIssue = await issueLinkCode(other.id, T0)
+    const conflict = await consumeLinkCode(otherIssue.code, 'Ustaff-B', T0)
+    check('他人に紐づけ済みのLINEアカウントは奪えない', conflict.status === 'ALREADY_LINKED_TO_OTHER', conflict.status)
+    check(
+      '奪われずに元の担当者のままになる',
+      (await prisma.staff.findUniqueOrThrow({ where: { id: target.id } })).lineUserId === 'Ustaff-B',
+    )
+
+    // 発行し直すと前のコードは無効になる
+    const first = await issueLinkCode(other.id, T0)
+    const second = await issueLinkCode(other.id, T0)
+    const staleCode = await consumeLinkCode(first.code, 'Ustaff-C', T0)
+    check('再発行すると前のコードは無効になる', staleCode.status === 'NOT_FOUND', staleCode.status)
+    const fresh = await consumeLinkCode(second.code, 'Ustaff-C', T0)
+    check('最後に発行したコードで紐づく', fresh.status === 'LINKED', fresh.status)
+
+    // 社内通知チャネルに来たメッセージを顧客として扱わない
+    await processLineEvents(
+      [
+        {
+          type: 'message',
+          timestamp: T0.getTime(),
+          source: { type: 'user', userId: 'Uunknown-internal' },
+          webhookEventId: 'evt-notify-1',
+          message: { id: 'msg-notify', type: 'text', text: 'これは社内チャネルへの発言' },
+        },
+      ],
+      'NOTIFY',
+      await loadPolicyContext(T0),
+      T0.getTime(),
+    )
+    check('社内通知チャネルの発言は顧客にならない', (await prisma.customer.count()) === 0)
+    check('社内通知チャネルの発言で会話が作られない', (await prisma.conversation.count()) === 0)
+
   } finally {
     server.close()
     await prisma.$disconnect()

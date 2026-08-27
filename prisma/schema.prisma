@@ -111,9 +111,30 @@ model Staff {
   customers    Customer[]
   sentMessages Message[]
   users        User[]
+  linkCodes    StaffLinkCode[]
 
   @@index([active])
   @@map("staff")
+}
+
+/// 担当者のLINEユーザーIDを本人操作で紐づけるための使い捨てコード。
+/// 33文字のユーザーIDを手で書き写すと打ち間違いが起きるため、
+/// 「管理画面で発行 → 本人が社内通知Botへ送信」で自動的に紐づける。
+model StaffLinkCode {
+  id      String @id @default(cuid())
+  staffId String
+  staff   Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  /// 平文は保存しない。照合はハッシュの完全一致で行う
+  codeHash  String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  /// 誰が使ったか（監査用）
+  usedByLineUserId String?
+  createdAt        DateTime @default(now())
+
+  @@index([staffId])
+  @@index([expiresAt])
+  @@map("staff_link_codes")
 }
 
 /// 管理画面ログインユーザー
