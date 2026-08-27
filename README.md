@@ -22,6 +22,19 @@
 | [06. セットアップ・運用手順](docs/06-operations.md) | LINE設定 → デプロイ → 監視 → トラブルシューティング |
 | [07. 担当者の返信をどう検知するか](docs/07-line-reply-detection.md) | **LINE側の制約と、その回避策（必読）** |
 
+### 賃貸保証会社 事前審査シミュレーター（別機能）
+
+申込前に「どの保証会社を優先すべきか」を営業担当が判断するための調査・仕様一式。
+
+| # | 内容 |
+|---|------|
+| [**保証会社 事前審査 — 調査結果と結論**](docs/guarantee/00-summary.md) | **まずはここから。当初構想がなぜ使えないかを含む** |
+| [01. 保証会社別 信用情報リサーチ](docs/guarantee/01-credit-bureau-research.md) | 8社の加盟信用情報機関・影響マトリクス（一次情報URL付き） |
+| [02. 既存サービス・API調査](docs/guarantee/02-existing-services.md) | 既製品では実現できない理由 |
+| [03. 法律・個人情報保護・規約](docs/guarantee/03-legal-compliance.md) | **必読。適法な代替設計** |
+| [04. システム仕様](docs/guarantee/04-system-spec.md) | 構成・入力項目・DB・API・画面 |
+| [05. 判定ロジック仕様](docs/guarantee/05-scoring-rules.md) | 保証会社ごとのルールと5段階判定 |
+
 ---
 
 ## ⚠️ 導入前に必ず読むこと
