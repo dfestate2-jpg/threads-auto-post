@@ -538,7 +538,9 @@ function step1_認可URL表示() {
 }
 
 function step2_認可コード登録() {
-  const code = '';   // ← ここに認可コードを貼る
+  // ↓ 認可コードは、この行の ' と ' の【あいだ】に貼り付けてください。
+  //   「//」から右はプログラムとして読まれないので、そちらに貼っても動きません。
+  const code = '';
   if (!code) throw new Error('認可コードを貼り付けてください');
 
   const res = UrlFetchApp.fetch(FREEE.TOKEN, {
