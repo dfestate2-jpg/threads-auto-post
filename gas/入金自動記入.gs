@@ -11,11 +11,20 @@
  *  ============================================================ */
 
 const 設定 = {
-  // シートの形（A:入金日 B:契約者名 C:入金者 D:入金額 E:契約締結日 F:備考）
-  列: { 入金日: 1, 契約者名: 2, 入金者: 3, 入金額: 4 },
   見出し行: 2,
   データ開始行: 3,
-  見出し: ['入金日', '契約者名', '入金者', '入金額', '契約締結日', '備考(お金の一連の流れ)'],
+
+  // 書き込む列は、見出し行の文字から**毎回自動で探す**。
+  // 列を挿入しても、見出しの位置が変わっても、書き込み先がずれない。
+  // 見つからないときは黙って別の列に書かず、エラーで止める。
+  見出し: {
+    入金日: '入金日',
+    入金者: '入金者',
+    入金額: '入金額'
+  },
+
+  // 月次シートの名前の形式。**既存シートの付け方に合わせること**（例: 2026/08）
+  シート名の形式: 'yyyy/MM',
 
   // 月次シートが無いときの複製元。既存ブックの「コピー」シート
   テンプレシート: 'コピー',
@@ -179,24 +188,63 @@ function ブック_() {
 
 /** ===== シートへの追記 ===== */
 
-/** YYYYMM のシートを取得。無ければ「コピー」シートを複製して作る */
+/** 見出しの文字を比べられる形にそろえる（全角半角・空白の違いを無視） */
+function 見出し比較用_(v) {
+  return String(v == null ? '' : v).normalize('NFKC').replace(/[　\s]+/g, '');
+}
+
+/**
+ * 見出し行の文字から、書き込む列の番号を探す。
+ *
+ * 列番号を決め打ちにしていると、シートの左に1列足されただけで
+ * **静かに隣の列へ書いてしまう**。それを避けるために毎回探す。
+ * 見つからないときは書かずにエラーで止める。
+ */
+function 列位置_(sh) {
+  const 幅 = Math.max(sh.getLastColumn(), 10);
+  const 行 = sh.getRange(設定.見出し行, 1, 1, 幅).getValues()[0].map(見出し比較用_);
+
+  function 探す(名前) {
+    const i = 行.indexOf(見出し比較用_(名前));
+    if (i < 0) {
+      throw new Error(
+        'シート「' + sh.getName() + '」の' + 設定.見出し行 + '行目に見出し「' + 名前 + '」が見つかりません。'
+        + ' 見出しの文字が変わっていないか確認してください。'
+        + '（' + 設定.見出し行 + '行目: ' + 行.filter(String).join(' / ') + '）');
+    }
+    return i + 1;
+  }
+
+  return {
+    入金日: 探す(設定.見出し.入金日),
+    入金者: 探す(設定.見出し.入金者),
+    入金額: 探す(設定.見出し.入金額)
+  };
+}
+
+/** 入金日が属する月次シートの名前（例 2026/08） */
+function 月シート名_(d) {
+  return Utilities.formatDate(d, 'Asia/Tokyo', 設定.シート名の形式);
+}
+
+/** 月次シートを取得。無ければ「コピー」シートを複製して作る */
 function 月シート取得_(d) {
   const ss = ブック_();
-  const 名前 = Utilities.formatDate(d, 'Asia/Tokyo', 'yyyyMM');
+  const 名前 = 月シート名_(d);
 
   let sh = ss.getSheetByName(名前);
   if (sh) return sh;
 
   const テンプレ = ss.getSheetByName(設定.テンプレシート);
-  if (テンプレ) {
-    // 見出し・列幅・書式ごと引き継ぐ
-    sh = テンプレ.copyTo(ss).setName(名前);
-  } else {
-    sh = ss.insertSheet(名前);
-    sh.getRange(設定.見出し行, 1, 1, 設定.見出し.length).setValues([設定.見出し])
-      .setFontWeight('bold');
+  if (!テンプレ) {
+    // 見出しの並びを勝手に作ると既存シートと形が変わるので、作らずに止める
+    throw new Error(
+      'シート「' + 名前 + '」が無く、複製元の「' + 設定.テンプレシート + '」シートも見つかりません。'
+      + ' テンプレートのシート名を 設定.テンプレシート に合わせてください。');
   }
 
+  // 見出し・列幅・書式ごと引き継ぐ
+  sh = テンプレ.copyTo(ss).setName(名前);
   ss.setActiveSheet(sh);
   ss.moveActiveSheet(ss.getNumSheets());   // 既存の並びに合わせて右端へ
   return sh;
@@ -207,11 +255,11 @@ function 月シート取得_(d) {
  * ※getLastRow() だけに頼らない。書式や入力規則が下まで入っていると
  *   空行なのに1000行目などを返すため、C列（入金者）の中身で判定する。
  */
-function 最終データ行_(sh) {
+function 最終データ行_(sh, 列) {
   const 最大 = sh.getLastRow();
   if (最大 < 設定.データ開始行) return 設定.データ開始行 - 1;
 
-  const 値 = sh.getRange(設定.データ開始行, 設定.列.入金者, 最大 - 設定.データ開始行 + 1, 1).getValues();
+  const 値 = sh.getRange(設定.データ開始行, 列.入金者, 最大 - 設定.データ開始行 + 1, 1).getValues();
   for (let i = 値.length - 1; i >= 0; i--) {
     if (String(値[i][0]).trim() !== '') return 設定.データ開始行 + i;
   }
@@ -222,10 +270,10 @@ function 最終データ行_(sh) {
  * 既存の最終行が属する入金日を返す（yyyy-MM-dd）。
  * A列は「同じ日付なら空欄」の運用なので、上の行へさかのぼって探す。
  */
-function 直近の入金日_(sh, 最終行) {
+function 直近の入金日_(sh, 列, 最終行) {
   if (最終行 < 設定.データ開始行) return '';
 
-  const 値 = sh.getRange(設定.データ開始行, 設定.列.入金日, 最終行 - 設定.データ開始行 + 1, 1).getValues();
+  const 値 = sh.getRange(設定.データ開始行, 列.入金日, 最終行 - 設定.データ開始行 + 1, 1).getValues();
   for (let i = 値.length - 1; i >= 0; i--) {
     const v = 値[i][0];
     if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Tokyo', 'yyyy-MM-dd');
@@ -239,13 +287,14 @@ function 直近の入金日_(sh, 最終行) {
 
 /** 該当月のシートに1行追記する。既存行は絶対に触らない */
 function 月シートに追記_(m, 状態) {
-  const 名前 = Utilities.formatDate(m.date, 'Asia/Tokyo', 'yyyyMM');
+  const 名前 = 月シート名_(m.date);
 
   let s = 状態[名前];
   if (!s) {
     const sh = 月シート取得_(m.date);
-    const 最終 = 最終データ行_(sh);
-    s = 状態[名前] = { sh: sh, 行: 最終, 前回日付: 直近の入金日_(sh, 最終) };
+    const 列 = 列位置_(sh);
+    const 最終 = 最終データ行_(sh, 列);
+    s = 状態[名前] = { sh: sh, 列: 列, 行: 最終, 前回日付: 直近の入金日_(sh, 列, 最終) };
   }
 
   const 行 = ++s.行;
@@ -253,10 +302,10 @@ function 月シートに追記_(m, 状態) {
 
   // 同じ日付が続く行は日付を書かない（既存の手入力の書き方に合わせる）
   if (!設定.同じ日付は空欄にする || 日付キー !== s.前回日付) {
-    s.sh.getRange(行, 設定.列.入金日).setValue(m.date).setNumberFormat('yyyy/mm/dd');
+    s.sh.getRange(行, s.列.入金日).setValue(m.date).setNumberFormat('yyyy/mm/dd');
   }
-  s.sh.getRange(行, 設定.列.入金者).setValue(m.name);
-  s.sh.getRange(行, 設定.列.入金額).setValue(m.amount).setNumberFormat('#,##0');
+  s.sh.getRange(行, s.列.入金者).setValue(m.name);
+  s.sh.getRange(行, s.列.入金額).setValue(m.amount).setNumberFormat('#,##0');
 
   s.前回日付 = 日付キー;
 }
