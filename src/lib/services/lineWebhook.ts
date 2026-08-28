@@ -13,6 +13,7 @@ import { prisma } from '@/lib/prisma'
 import { recordInboundMessage, recordOutboundMessage } from './conversation'
 import { applyQuickAction } from './quickAction'
 import { consumeLinkCode, linkResultMessage } from './staffLink'
+import { groupIdMessage, groupWelcomeMessage, isGroupIdRequest } from '@/lib/domain/groupSetup'
 import type { PolicyContext } from './policy'
 
 /** イベントの timestamp がこれ以上ずれていたらリプレイとみなして拒否する */
@@ -92,8 +93,29 @@ async function isInternalStaff(userId: string): Promise<boolean> {
  * ここで受け付けるのは担当者の連携コードだけ。
  */
 async function handleInternalChannelEvent(event: LineWebhookEvent): Promise<void> {
-  const userId = event.source?.userId
-  if (!userId || event.source.type !== 'user') return
+  const source = event.source
+
+  /**
+   * グループ・複数人トークに招待された場合。
+   * グループIDは画面のどこにも出ないため、ここで本人へ返信して伝える。
+   * これが無いと「グループを通知先にする」設定が事実上できない。
+   */
+  if (source?.type === 'group' || source?.type === 'room') {
+    const groupTarget = source.groupId ?? source.roomId
+    if (!groupTarget) return
+    if (event.type === 'join') {
+      await ack(event, 'NOTIFY', groupWelcomeMessage(groupTarget))
+      return
+    }
+    if (event.type === 'message' && event.message?.type === 'text' && isGroupIdRequest(event.message.text)) {
+      await ack(event, 'NOTIFY', groupIdMessage(groupTarget))
+    }
+    // グループ内の通常の会話には反応しない
+    return
+  }
+
+  const userId = source?.userId
+  if (!userId || source.type !== 'user') return
 
   if (event.type === 'follow') {
     await ack(event, 'NOTIFY', '社内通知Botです。管理画面で発行した連携コードを送信してください。')
