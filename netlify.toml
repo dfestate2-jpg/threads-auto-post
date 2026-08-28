@@ -1,3 +1,8 @@
+[build.environment]
+  # Netlify の既定バージョンに引きずられないよう固定する。
+  # Next.js 15 / Prisma 6 の動作確認を行っているバージョンに合わせている。
+  NODE_VERSION = "22"
+
 [build]
   # build:deploy = prisma migrate deploy && prisma generate && next build
   # デプロイのたびに未適用のマイグレーションを自動で適用する。

@@ -5,6 +5,13 @@
 
 generator client {
   provider = "prisma-client-js"
+  /**
+   * ビルドは Linux(Debian) 上で行われるが、Netlify Functions の実行環境は
+   * AWS Lambda(Amazon Linux) である。native だけだと実行時に
+   * 「Query engine binary for current platform could not be found」で落ちるため、
+   * 実行環境用のエンジンも一緒に生成しておく。
+   */
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
