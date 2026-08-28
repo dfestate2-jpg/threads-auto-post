@@ -27,6 +27,15 @@ export function retailHistoryStore(): RetailHistoryStore {
   return store;
 }
 
+/**
+ * 履歴をどこに貯めているか。
+ * メモリの場合はプロセスごとに独立するため、定期取得 (cron) が別インスタンスに
+ * 当たると画面側からは見えない。UI / API でこの違いを隠さないために公開する。
+ */
+export function historyStorageKind(): "postgres" | "memory" {
+  return process.env.DATABASE_URL ? "postgres" : "memory";
+}
+
 /** テスト用 */
 export function setRetailHistoryStore(next: RetailHistoryStore | null): void {
   store = next;

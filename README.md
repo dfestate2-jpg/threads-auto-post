@@ -133,6 +133,30 @@ OANDA が返すのは「今この瞬間の比率」だけで履歴が無いた�
 データ自体が古いときに「変化 0」と誤表示することはない（古さは Updated 表示で分かる）。
 履歴の保存が失敗しても現在値の表示は止めない。
 
+### 定期取得 (cron)
+
+画面を開いたときにも履歴は貯まるが、それだけだと誰も見ていない時間帯が歯抜けになる。
+`/api/cron/collect` を 20 分ごと（OANDA の更新間隔）に叩くと、全銘柄をまとめて取得して貯める。
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" https://<host>/api/cron/collect
+```
+
+- `CRON_SECRET` が未設定なら 503 を返す（誰でも叩ける状態にしない）
+- レスポンスに銘柄ごとの結果と、貯めなかった理由が入る
+
+**定期取得が意味を持つのは `DATABASE_URL` を設定したときだけ。** 保存先がメモリの場合、
+貯まるのは cron を処理したプロセスの中だけで、画面を出すインスタンスとは別になり得る。
+その状態で叩くと、レスポンスの `warning` にその旨が入る。
+
+スケジューラは環境に合わせて用意する。
+
+| 環境 | 設定 |
+| --- | --- |
+| Vercel | `vercel.json` の `crons` に設定済み（`*/20 * * * *`）。プランによって最短間隔の制限があるので要確認 |
+| Netlify | Scheduled Functions で同じ URL を叩く |
+| その他 | 任意の cron から `curl` する（GitHub Actions の `schedule` でも可） |
+
 ### live モードでまだ出ないもの
 
 - **EUR/JPY・GBP/JPY の Large Trader** … 対応する単一の CFTC 建玉報告がない。
@@ -192,13 +216,14 @@ npm run build
 
 ```
 src/
-  app/                    Next.js App Router（TOP / 詳細 / API）
+  app/                    Next.js App Router（TOP / 詳細 / API / cron）
   components/             カード・バッジ・チャートなどの表示部品
   lib/
     markets.ts            対象銘柄の定義
     alignment.ts          Retail vs Large Trader の判定・スコア
     snapshot.ts           Provider から集めて 1 銘柄分にまとめる層
     format.ts             表示フォーマッタ
+    collect.ts            定期取得（全銘柄を取得して履歴に貯める）
     cache.ts              Provider 結果の短期キャッシュ
     history/              Retail 履歴の保存 (メモリ / PostgreSQL)
   providers/
@@ -237,7 +262,6 @@ ORM は使わず `pg` で直接 SQL を書いている。ビルド時のコー�
 1. ~~OANDA Retail Data の接続~~ → 実装済み。実レスポンスでの検証待ち
 2. ~~CFTC COT / TFF の接続~~ → 実装済み。実レスポンスでの検証待ち
 3. ~~Retail 履歴の保存~~ → 実装済み（メモリ / PostgreSQL）。実 DB での検証待ち
-4. 定期取得（20 分ごとに全銘柄を取得して履歴に貯める cron）。
-   現在はアクセスがあったときに貯まるため、誰も見ていない時間帯は歯抜けになる
+4. ~~定期取得（20 分ごとに履歴へ貯める cron）~~ → 実装済み（`/api/cron/collect`）
 5. Price Data の接続
 6. 必要なら Retail の提供元を追加（IG / FXCM）して Aggregated 表示にする
