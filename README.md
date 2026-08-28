@@ -119,10 +119,22 @@ UI ではこの 2 つを同じ鮮度に見せないよう、表示形式を分�
 リソース ID・フィールド名・パーセンテージの意味が想定と違った場合は、**値を作らず理由付きで
 `DATA UNAVAILABLE`** を返すようにしてある。初回接続時の確認手順は [`docs/providers.md`](docs/providers.md)。
 
+### Retail の履歴（1h / 24h 変化とチャート）
+
+OANDA が返すのは「今この瞬間の比率」だけで履歴が無いため、取得した値を自分で貯めて差分を出す。
+
+| DATABASE_URL | 保存先 | 挙動 |
+| --- | --- | --- |
+| 未設定 | プロセス内メモリ | 起動後に貯まった分だけ 1h / 24h とチャートが出る。再起動で消える |
+| 設定あり | PostgreSQL (`retail_sentiment`) | 永続化される。`npm run db:schema` でテーブルを作る |
+
+まだ十分に貯まっていない間は、`0` や推測値ではなく `—`（変化なし表示ではない）と
+「履歴がありません」を出す。比較の基準は壁時計ではなく**最新の観測時刻**に合わせているため、
+データ自体が古いときに「変化 0」と誤表示することはない（古さは Updated 表示で分かる）。
+履歴の保存が失敗しても現在値の表示は止めない。
+
 ### live モードでまだ出ないもの
 
-- **Retail の 1h / 24h 変化と履歴チャート** … OANDA はスナップショットのみで履歴を返さないため、
-  DB に貯め始めるまでは `—` と「履歴がありません」になる（demo モードでは表示される）
 - **EUR/JPY・GBP/JPY の Large Trader** … 対応する単一の CFTC 建玉報告がない。
   2 契約から合成しても契約単位が異なり根拠のない数字になるため `DATA UNAVAILABLE` にしている
 - **BTC/USD の Large Trader** … Retail 側と揃う粒度の建玉報告がない
@@ -187,11 +199,13 @@ src/
     alignment.ts          Retail vs Large Trader の判定・スコア
     snapshot.ts           Provider から集めて 1 銘柄分にまとめる層
     format.ts             表示フォーマッタ
+    cache.ts              Provider 結果の短期キャッシュ
+    history/              Retail 履歴の保存 (メモリ / PostgreSQL)
   providers/
     types.ts              共通インターフェース
     registry.ts           DATA_MODE に応じて使う Provider を決める
     mock/ oanda/ ig/ fxcm/ cftc/ price/
-prisma/schema.prisma      履歴保存用のスキーマ
+db/schema.sql             テーブル定義 (PostgreSQL)
 tests/                    判定ロジックと Provider の挙動のテスト
 ```
 
@@ -207,9 +221,14 @@ getPrice(market)               // Price Provider
 
 ### DB
 
-`prisma/schema.prisma` に `markets` / `retail_sentiment` / `large_trader_positions` / `market_prices` /
-`alignment_scores` を定義してある。MVP は Provider の値をそのまま表示しており、DB は
-実データ接続と同時に「取得 → 保存 → 表示」に切り替えるための保存先として用意している。
+`db/schema.sql` に `markets` / `retail_sentiment` / `large_trader_positions` / `market_prices` /
+`alignment_scores` を定義してある。適用は `npm run db:schema`（`psql "$DATABASE_URL" -f db/schema.sql`）。
+
+現在アプリが読み書きするのは `markets` と `retail_sentiment` の 2 つ（Retail の履歴用）。
+残りのテーブルは、Large Trader / 価格 / 判定結果を貯める段階で使う。
+
+ORM は使わず `pg` で直接 SQL を書いている。ビルド時のコード生成が要らず、
+テーブル定義の出どころを `db/schema.sql` 1 つに保てるため。
 
 ---
 
@@ -217,6 +236,8 @@ getPrice(market)               // Price Provider
 
 1. ~~OANDA Retail Data の接続~~ → 実装済み。実レスポンスでの検証待ち
 2. ~~CFTC COT / TFF の接続~~ → 実装済み。実レスポンスでの検証待ち
-3. 履歴の DB 保存（Retail の 1h / 24h 変化と履歴チャートを実データで出すのに必要）
-4. Price Data の接続
-5. 必要なら Retail の提供元を追加（IG / FXCM）して Aggregated 表示にする
+3. ~~Retail 履歴の保存~~ → 実装済み（メモリ / PostgreSQL）。実 DB での検証待ち
+4. 定期取得（20 分ごとに全銘柄を取得して履歴に貯める cron）。
+   現在はアクセスがあったときに貯まるため、誰も見ていない時間帯は歯抜けになる
+5. Price Data の接続
+6. 必要なら Retail の提供元を追加（IG / FXCM）して Aggregated 表示にする

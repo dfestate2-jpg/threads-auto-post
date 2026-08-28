@@ -114,6 +114,26 @@ curl -s "https://publicreporting.cftc.gov/resource/gpe5-46if.json?cftc_contract_
 
 ---
 
+## Retail 履歴の保存
+
+`src/lib/history/` に、Retail の Long% を貯める層がある（OANDA が履歴を返さないため）。
+
+- `DATABASE_URL` 未設定 … `InMemoryRetailHistoryStore`（プロセス内・再起動で消える）
+- `DATABASE_URL` 設定あり … `PostgresRetailHistoryStore`（`retail_sentiment` テーブル）
+
+Postgres 実装は開発環境から DB に接続できないため**実データベースでの動作確認ができていない**。
+SQL とパラメータの組み立ては `tests/history.test.ts` でフェイクのクライアントを使って検証してある。
+初回接続時は次を確認する。
+
+```bash
+npm run db:schema                  # テーブル作成
+psql "$DATABASE_URL" -c "SELECT slug FROM markets;"
+psql "$DATABASE_URL" -c "SELECT * FROM retail_sentiment ORDER BY timestamp DESC LIMIT 5;"
+```
+
+現在は「アクセスがあったタイミングで貯まる」ため、誰も見ていない時間帯は歯抜けになる。
+連続した履歴が要る場合は、20 分ごとに `/api/markets` を叩く cron を用意する。
+
 ## キャッシュ
 
 `src/lib/cache.ts` にプロセス内キャッシュがある。

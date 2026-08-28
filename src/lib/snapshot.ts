@@ -8,6 +8,7 @@
  */
 
 import { evaluateAlignment, type AlignmentResult } from "@/lib/alignment";
+import { changeOver, retailHistoryStore, type RetailHistoryStore } from "@/lib/history";
 import { enabledMarkets, findMarket, type Market } from "@/lib/markets";
 import {
   dataMode,
@@ -110,9 +111,47 @@ function firstOk<T>(results: ProviderResult<T>[]): { data: T | null; reason: str
   return { data: null, reason: reasons.length > 0 ? reasons.join(" / ") : "Provider が設定されていない" };
 }
 
+/** チャートに使う履歴の長さ */
+const HISTORY_WINDOW_MS = 48 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * 実データの Retail は「今の比率」しか返らないので、保存済みの履歴と合わせて
+ * 1h / 24h 変化とチャートを作る。まだ貯まっていなければ null / 空のままにする。
+ *
+ * 保存側で失敗しても画面は出す (履歴が無いだけで、現在値は正しい)。
+ */
+async function withStoredHistory(
+  slug: string,
+  retail: RetailSentiment,
+  store: RetailHistoryStore,
+  now: Date,
+): Promise<RetailSentiment> {
+  try {
+    await store.record(slug, retail.meta.source, {
+      t: retail.meta.updatedAt,
+      longPercent: retail.longPercent,
+    });
+
+    const points = await store.since(slug, new Date(now.getTime() - HISTORY_WINDOW_MS));
+    if (points.length === 0) return retail;
+
+    return {
+      ...retail,
+      change1h: changeOver(points, HOUR_MS),
+      change24h: changeOver(points, 24 * HOUR_MS),
+      history: points.map((p) => ({ t: p.t, v: p.longPercent })),
+    };
+  } catch {
+    // 履歴が使えないだけなので、現在値はそのまま返す
+    return retail;
+  }
+}
+
 export async function getMarketSnapshot(
   market: Market,
   mode: DataMode = dataMode(),
+  store: RetailHistoryStore = retailHistoryStore(),
 ): Promise<MarketSnapshot> {
   const [retailResults, largeResults, priceResults] = await Promise.all([
     Promise.all(retailProviders(mode).map((p) => p.getRetailSentiment(market))),
@@ -121,6 +160,10 @@ export async function getMarketSnapshot(
   ]);
 
   const retail = aggregateRetail(retailResults);
+  // DEMO データは自前で履歴を持っているので保存しない
+  if (retail.data && !retail.data.meta.demo) {
+    retail.data = await withStoredHistory(market.slug, retail.data, store, new Date());
+  }
   const large = firstOk(largeResults);
   const price = firstOk(priceResults);
   const trend = priceTrendOf(price.data);
@@ -140,15 +183,19 @@ export async function getMarketSnapshot(
   };
 }
 
-export async function getAllSnapshots(mode: DataMode = dataMode()): Promise<MarketSnapshot[]> {
-  return Promise.all(enabledMarkets().map((m) => getMarketSnapshot(m, mode)));
+export async function getAllSnapshots(
+  mode: DataMode = dataMode(),
+  store: RetailHistoryStore = retailHistoryStore(),
+): Promise<MarketSnapshot[]> {
+  return Promise.all(enabledMarkets().map((m) => getMarketSnapshot(m, mode, store)));
 }
 
 export async function getSnapshotBySlug(
   slug: string,
   mode: DataMode = dataMode(),
+  store: RetailHistoryStore = retailHistoryStore(),
 ): Promise<MarketSnapshot | null> {
   const market = findMarket(slug);
   if (!market) return null;
-  return getMarketSnapshot(market, mode);
+  return getMarketSnapshot(market, mode, store);
 }
