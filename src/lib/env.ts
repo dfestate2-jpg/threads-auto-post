@@ -75,6 +75,56 @@ export const env = {
   get ingestSecret() {
     return optional('INGEST_SECRET')
   },
+
+  // --- 物件情報の一斉メール配信 -------------------------------------------
+  /** 送信プロバイダ。'resend' | 'sendgrid'。未設定なら送信を行わない（DRY RUN） */
+  get mailProvider() {
+    return (optional('MAIL_PROVIDER') ?? '').toLowerCase()
+  },
+  get mailApiKey() {
+    return required('MAIL_API_KEY')
+  },
+  /** 差出人アドレス。SPF/DKIM を設定済みの自社ドメインであること */
+  get mailFromAddress() {
+    return required('MAIL_FROM_ADDRESS')
+  },
+  get mailFromName() {
+    return optional('MAIL_FROM_NAME') ?? ''
+  },
+  get mailReplyTo() {
+    return optional('MAIL_REPLY_TO')
+  },
+  /**
+   * 特定電子メール法で本文への表示が義務づけられている送信者情報。
+   * 未設定だと配信を開始できないようにしている（法令違反の送信を構造的に防ぐ）。
+   */
+  get mailSenderOrg() {
+    return required('MAIL_SENDER_ORG')
+  },
+  get mailSenderAddress() {
+    return required('MAIL_SENDER_ADDRESS')
+  },
+  get mailSenderTel() {
+    return optional('MAIL_SENDER_TEL')
+  },
+  /** 配信停止リンクの署名鍵。未設定ならセッション鍵を流用する */
+  get unsubscribeSecret() {
+    return optional('UNSUBSCRIBE_SECRET') ?? required('SESSION_SECRET')
+  },
+  /** Cron 1回あたりの送信件数。プロバイダのレート上限に合わせて調整する */
+  get mailBatchSize() {
+    const n = Number(optional('MAIL_BATCH_SIZE') ?? '100')
+    return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 500) : 100
+  },
+  /** 同時送信数。上げすぎるとプロバイダに 429 で弾かれる */
+  get mailConcurrency() {
+    const n = Number(optional('MAIL_CONCURRENCY') ?? '4')
+    return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 20) : 4
+  },
+  /** 送信プロバイダからのバウンス通知 Webhook を認証する共有シークレット */
+  get mailWebhookSecret() {
+    return optional('MAIL_WEBHOOK_SECRET')
+  },
   get appBaseUrl() {
     return optional('APP_BASE_URL') ?? ''
   },

@@ -5,6 +5,8 @@ import { LogoutButton } from './LogoutButton'
 const NAV = [
   { href: '/', label: 'ダッシュボード' },
   { href: '/customers', label: '未返信一覧' },
+  { href: '/contacts', label: '配信先リスト' },
+  { href: '/campaigns', label: '一斉配信' },
   { href: '/settings', label: '設定' },
 ]
 

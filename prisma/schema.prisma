@@ -4,7 +4,7 @@
 // ===========================================================================
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   /**
    * ビルドは Linux(Debian) 上で行われるが、Netlify Functions の実行環境は
    * AWS Lambda(Amazon Linux) である。native だけだと実行時に
@@ -15,7 +15,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // アプリ実行時の接続。サーバーレスでは接続数を抑えるためプーラー経由にする
   url       = env("DATABASE_URL")
   // マイグレーション実行時の接続。
@@ -134,16 +134,16 @@ model Staff {
 /// 33文字のユーザーIDを手で書き写すと打ち間違いが起きるため、
 /// 「管理画面で発行 → 本人が社内通知Botへ送信」で自動的に紐づける。
 model StaffLinkCode {
-  id      String @id @default(cuid())
-  staffId String
-  staff   Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  id               String    @id @default(cuid())
+  staffId          String
+  staff            Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
   /// 平文は保存しない。照合はハッシュの完全一致で行う
-  codeHash  String    @unique
-  expiresAt DateTime
-  usedAt    DateTime?
+  codeHash         String    @unique
+  expiresAt        DateTime
+  usedAt           DateTime?
   /// 誰が使ったか（監査用）
   usedByLineUserId String?
-  createdAt        DateTime @default(now())
+  createdAt        DateTime  @default(now())
 
   @@index([staffId])
   @@index([expiresAt])
@@ -165,6 +165,8 @@ model User {
   lastLoginAt      DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+
+  campaigns Campaign[]
 
   @@map("users")
 }
@@ -193,6 +195,8 @@ model Customer {
   conversation Conversation?
   messages     Message[]
   reminders    Reminder[]
+  /// 一斉配信の配信先（メール等）。LINE の反応でセグメントするために紐づける
+  contact      Contact?
 
   @@index([assigneeId])
   @@index([blocked])
@@ -459,4 +463,244 @@ model CronRun {
 
   @@index([job, startedAt])
   @@map("cron_runs")
+}
+
+// ---------------------------------------------------------------------------
+// 物件情報の一斉配信（メール / 将来的にSMS）
+//
+// 公式LINEの一斉配信で反応が取れなかった層を、別チャネルで追いかけるための仕組み。
+// 設計の中心は「送ってはいけない相手に絶対に送らない」こと。
+//   1. Suppression（配信停止・バウンス）は Contact とは別テーブルに置き、
+//      再インポートしても復活しない
+//   2. CampaignRecipient に (campaignId, contactId) の UNIQUE を張り、二重送信を防ぐ
+//   3. 送信直前にも Suppression を引き直す
+// ---------------------------------------------------------------------------
+
+/// 配信先の取得経路。特定電子メール法の「同意の記録」として保存する
+enum ContactSource {
+  LINE_FORM /// 公式LINEに流入 → フォーム回答
+  WEB_FORM /// 自社サイトのフォーム
+  INQUIRY /// 問い合わせ・来店・電話
+  IMPORT /// CSV取込（経路が特定できないもの）
+  MANUAL /// 管理画面で手入力
+}
+
+enum ConsentStatus {
+  OPTED_IN /// 配信同意あり（フォームで明示的に同意を得た）
+  UNKNOWN /// 自社が取得した連絡先だが、明示同意の記録が無い
+  UNSUBSCRIBED /// 配信停止済み。二度と送らない
+}
+
+enum PropertyType {
+  MANSION /// マンション
+  HOUSE /// 戸建
+  LAND /// 土地
+  INVESTMENT /// 投資用・収益物件
+  OTHER
+}
+
+enum CampaignChannel {
+  EMAIL
+  SMS /// 未実装。送信アダプタを足せばこのキューに載る
+}
+
+enum CampaignStatus {
+  DRAFT /// 作成中。対象未確定
+  QUEUED /// 対象を確定し、送信待ち
+  SENDING /// 送信中
+  PAUSED /// 一時停止（管理画面から）
+  SENT /// 全件処理済み
+  FAILED /// 続行不能なエラーで停止
+}
+
+enum RecipientStatus {
+  PENDING /// 送信待ち
+  SENT /// 送信成功
+  FAILED /// 規定回数リトライしても失敗
+  SKIPPED /// 送信直前の再判定で対象外になった（配信停止・バウンス等）
+}
+
+enum SuppressionReason {
+  UNSUBSCRIBED /// 本人が配信停止した
+  BOUNCED /// 宛先不明（ハードバウンス）
+  COMPLAINED /// 迷惑メール報告
+  MANUAL /// 管理者が手動で登録
+}
+
+/// 配信先。LINEの Customer とは別軸で持つ（LINEに居ない連絡先も扱うため）
+model Contact {
+  id    String  @id @default(cuid())
+  /// 小文字に正規化して保存する。重複取込の判定キー
+  email String  @unique
+  name  String?
+  kana  String?
+  /// E.164 ではなく入力そのまま（SMS送信時に正規化する）
+  phone String?
+
+  source      ContactSource @default(IMPORT)
+  consent     ConsentStatus @default(UNKNOWN)
+  /// 同意を得た日時（フォーム送信日時）
+  consentAt   DateTime?
+  /// 「SNS広告→公式LINE→フォーム回答」など、取得経路の説明を残す
+  consentNote String?
+
+  /// 公式LINEの顧客と紐づける。LINEの反応履歴でセグメントするために使う
+  customerId String?   @unique
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  /// --- 希望条件（セグメント抽出に使う） ---
+  areas         String[]       @default([])
+  /// 予算（万円）
+  budgetMin     Int?
+  budgetMax     Int?
+  propertyTypes PropertyType[] @default([])
+
+  /// --- 状態 ---
+  unsubscribedAt DateTime?
+  bounceCount    Int       @default(0)
+  lastBouncedAt  DateTime?
+  lastSentAt     DateTime?
+  active         Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  recipients CampaignRecipient[]
+
+  @@index([consent, active])
+  @@index([createdAt])
+  @@map("contacts")
+}
+
+/// 送ってはいけない宛先の台帳。Contact を消しても・作り直しても残る
+model Suppression {
+  id        String            @id @default(cuid())
+  /// 小文字正規化したメールアドレス、または正規化した電話番号
+  address   String            @unique
+  channel   CampaignChannel   @default(EMAIL)
+  reason    SuppressionReason
+  note      String?
+  createdAt DateTime          @default(now())
+
+  @@index([channel, createdAt])
+  @@map("suppressions")
+}
+
+/// 配信する物件
+model Property {
+  id            String       @id @default(cuid())
+  title         String
+  propertyType  PropertyType @default(OTHER)
+  /// 市区町村など。Contact.areas との突き合わせに使う
+  area          String?
+  address       String?
+  /// 価格（万円）
+  price         Int?
+  layout        String?
+  /// 専有面積・土地面積（㎡）
+  sizeSqm       Float?
+  stationAccess String?
+  description   String?
+  /// 物件詳細ページのURL
+  url           String?
+  imageUrl      String?
+  published     Boolean      @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  campaigns CampaignProperty[]
+
+  @@index([published, createdAt])
+  @@map("properties")
+}
+
+/// 一斉配信のひとまとまり
+model Campaign {
+  id      String          @id @default(cuid())
+  name    String
+  channel CampaignChannel @default(EMAIL)
+  subject String
+  /// 差し込み変数を含む本文。{{name}} {{properties}} {{unsubscribe_url}}
+  body    String
+  status  CampaignStatus  @default(DRAFT)
+
+  /// --- セグメント条件（対象確定時に評価する） ---
+  segAreas          String[]       @default([])
+  segBudgetMin      Int?
+  segBudgetMax      Int?
+  segTypes          PropertyType[] @default([])
+  /// 明示的な同意（OPTED_IN）がある人にだけ送る
+  segOptedInOnly    Boolean        @default(true)
+  /// 公式LINEで反応が無い人だけに送る（ブロック済み、または下記日数こちらへの発信が無い）
+  segLineSilentOnly Boolean        @default(false)
+  segLineSilentDays Int            @default(30)
+
+  /// --- 進捗（対象確定時に totalCount を確定し、以降カウントアップする） ---
+  totalCount   Int @default(0)
+  sentCount    Int @default(0)
+  failedCount  Int @default(0)
+  skippedCount Int @default(0)
+
+  queuedAt   DateTime?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  lastError  String?
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  properties CampaignProperty[]
+  recipients CampaignRecipient[]
+
+  @@index([status, queuedAt])
+  @@map("campaigns")
+}
+
+model CampaignProperty {
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  position   Int      @default(0)
+
+  @@id([campaignId, propertyId])
+  @@index([campaignId, position])
+  @@map("campaign_properties")
+}
+
+/// 送信キューの1件。ここに入った時点で宛先が確定する
+model CampaignRecipient {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId  String
+  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  /// 送信時点の値を固定して保存する（後から Contact を編集しても送信記録は変わらない）
+  address String
+  name    String?
+
+  status            RecipientStatus @default(PENDING)
+  attempts          Int             @default(0)
+  /// 次に送信を試みてよい時刻。リトライのバックオフに使う
+  nextAttemptAt     DateTime        @default(now())
+  /// 確保（claim）の有効期限。プロセスが落ちてもこの時刻を過ぎれば別実行が拾い直す
+  claimedUntil      DateTime?
+  sentAt            DateTime?
+  lastError         String?
+  /// 送信プロバイダ側のID。バウンス通知と突き合わせる
+  providerMessageId String?
+
+  createdAt DateTime @default(now())
+
+  /// 同じ配信で同じ相手に二度送らないことを DB 制約で保証する
+  @@unique([campaignId, contactId])
+  @@index([campaignId, status])
+  @@index([status, nextAttemptAt])
+  @@index([providerMessageId])
+  @@map("campaign_recipients")
 }
