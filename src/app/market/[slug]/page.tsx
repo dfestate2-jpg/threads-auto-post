@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { BiasValue } from "@/components/BiasValue";
 import { NetPositionChart } from "@/components/NetPositionChart";
 import { SentimentBar } from "@/components/SentimentBar";
@@ -22,6 +23,7 @@ export default async function MarketDetailPage({ params }: { params: Promise<{ s
 
   return (
     <main className="mx-auto w-full max-w-3xl px-4 pb-16 pt-6">
+      <AutoRefresh />
       <Link href="/" className="text-xs text-muted hover:text-white">
         ← MARKET SENTIMENT
       </Link>

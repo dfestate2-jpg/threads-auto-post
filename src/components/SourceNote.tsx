@@ -22,6 +22,7 @@ export function SourceNote({ meta, label }: { meta: DataMeta; label?: string }) 
         )}
       </span>
       {meta.cadence === "weekly" ? <span className="ml-1">(weekly)</span> : null}
+      {meta.cadence === "snapshot20m" ? <span className="ml-1">(20 min ごと)</span> : null}
     </p>
   );
 }

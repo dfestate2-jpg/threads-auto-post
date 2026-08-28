@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearCache } from "@/lib/cache";
 import { MARKETS, findMarket } from "@/lib/markets";
 import { aggregateRetail, getAllSnapshots, getSnapshotBySlug, priceTrendOf } from "@/lib/snapshot";
 import type { ProviderResult, RetailSentiment } from "@/providers/types";
@@ -118,14 +119,36 @@ describe("demo モードのスナップショット", () => {
 });
 
 describe("live モード", () => {
-  it("未接続の Provider は値を作らず、理由を返す", async () => {
+  // 外部 API を叩かせない (テストをネットワークに依存させない)
+  beforeEach(() => {
+    clearCache();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network disabled in tests");
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearCache();
+  });
+
+  it("トークン未設定・API 不通のときは値を作らず、理由を返す", async () => {
     const snapshot = await getSnapshotBySlug("usdjpy", "live");
     expect(snapshot?.retail).toBeNull();
     expect(snapshot?.large).toBeNull();
     expect(snapshot?.price).toBeNull();
     expect(snapshot?.demo).toBe(false);
     expect(snapshot?.alignment.status).toBe("DATA_UNAVAILABLE");
-    expect(snapshot?.retailReason).toContain("OANDA");
+    expect(snapshot?.retailReason).toContain("OANDA_API_TOKEN");
     expect(snapshot?.largeReason).toContain("CFTC");
+  });
+
+  it("クロス円は対応する単一の建玉報告がないため Large Trader を出さない", async () => {
+    const snapshot = await getSnapshotBySlug("eurjpy", "live");
+    expect(snapshot?.large).toBeNull();
+    expect(snapshot?.largeReason).toContain("単一の CFTC 建玉報告がない");
   });
 });

@@ -11,8 +11,11 @@ import type { Market } from "@/lib/markets";
 export type Bias = "LONG" | "SHORT" | "NEUTRAL";
 export type Trend = "UP" | "DOWN" | "FLAT";
 
-/** データの更新頻度。週次データをリアルタイムと誤解させないために持つ。 */
-export type Cadence = "realtime" | "hourly" | "daily" | "weekly";
+/**
+ * データの更新頻度。週次データをリアルタイムと誤解させないために持つ。
+ * "snapshot20m" は OANDA の Position Book のように 20 分ごとに更新されるもの。
+ */
+export type Cadence = "realtime" | "snapshot20m" | "hourly" | "daily" | "weekly";
 
 export interface DataMeta {
   /** 表示するデータ提供元名 (例: "OANDA", "CFTC TFF") */

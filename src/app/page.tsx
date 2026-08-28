@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { MarketCard } from "@/components/MarketCard";
 import { getAllSnapshots } from "@/lib/snapshot";
 
@@ -10,6 +11,7 @@ export default async function HomePage() {
 
   return (
     <main className="mx-auto w-full max-w-5xl px-4 pb-16 pt-8">
+      <AutoRefresh />
       <header>
         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">MARKET SENTIMENT</h1>
         <p className="mt-1 text-sm text-muted">Retail vs Large Trader</p>

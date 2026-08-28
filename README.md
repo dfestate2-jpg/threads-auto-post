@@ -86,18 +86,47 @@ Alignment（Retail → Large → Price → Status）、および Retail / Net Po
 | `demo`（既定） | Mock Provider を使う。全ての数値に `DEMO DATA` が付く |
 | `live` | 実データ Provider を使う。未接続の Provider は `DATA UNAVAILABLE` になるだけで、値は作らない |
 
+### 更新頻度（リアルタイム性）
+
+データの種類によって更新頻度が違う。ここは実装ではなくデータ側の性質なので、揃えられない。
+
+| データ | 実際の更新頻度 | 画面の表示 |
+| --- | --- | --- |
+| Retail (OANDA Position Book) | 約 20 分ごとのスナップショット | 相対時間 + `(20 min ごと)` |
+| Large Trader (CFTC COT / TFF) | **週次**（火曜集計 → 金曜 15:30 ET 公表） | 対象週の日付 + `(weekly)` |
+
+画面は 60 秒ごとに自動で再取得する（タブが非表示の間は止まる）。
+Provider 側は OANDA を 10 分、CFTC を 1 時間キャッシュしており、更新頻度以上に API を叩かない。
+
+**大口 (CFTC) はリアルタイムにできない。** 週次かつ対象日から公表まで 3 日遅れるため、
+Retail がほぼリアルタイム・Large が週次という非対称は避けられない。
+UI ではこの 2 つを同じ鮮度に見せないよう、表示形式を分けている。
+
 ### Provider の接続状況
 
 | 種別 | Provider | 状況 |
 | --- | --- | --- |
 | Retail | Mock | 実装済み（DEMO DATA） |
-| Retail | OANDA | **このProviderはAPI接続待ち**（Position Book 取得にトークンが必要） |
+| Retail | OANDA | 実装済み・**実レスポンス未検証**（`OANDA_API_TOKEN` が必要） |
 | Retail | IG | **このProviderはAPI接続待ち** |
 | Retail | FXCM | **このProviderはAPI接続待ち**（SSI の公開提供が縮小しており取得経路が未確定） |
 | Large Trader | Mock | 実装済み（DEMO DATA） |
-| Large Trader | CFTC COT / TFF | **このProviderはAPI接続待ち**（銘柄と contract code の対応は実装済み） |
+| Large Trader | CFTC COT / TFF | 実装済み・**実レスポンス未検証**（認証不要） |
 | Price | Mock | 実装済み（DEMO DATA） |
 | Price | Price Feed | **このProviderはAPI接続待ち** |
+
+「実レスポンス未検証」は、開発環境から外部ホストへ接続できずライブ API で動作確認できていないことを指す。
+リソース ID・フィールド名・パーセンテージの意味が想定と違った場合は、**値を作らず理由付きで
+`DATA UNAVAILABLE`** を返すようにしてある。初回接続時の確認手順は [`docs/providers.md`](docs/providers.md)。
+
+### live モードでまだ出ないもの
+
+- **Retail の 1h / 24h 変化と履歴チャート** … OANDA はスナップショットのみで履歴を返さないため、
+  DB に貯め始めるまでは `—` と「履歴がありません」になる（demo モードでは表示される）
+- **EUR/JPY・GBP/JPY の Large Trader** … 対応する単一の CFTC 建玉報告がない。
+  2 契約から合成しても契約単位が異なり根拠のない数字になるため `DATA UNAVAILABLE` にしている
+- **BTC/USD の Large Trader** … Retail 側と揃う粒度の建玉報告がない
+- **Price** … Provider 未接続
 
 接続時の想定エンドポイントなどは [`docs/providers.md`](docs/providers.md) を参照。
 
@@ -186,7 +215,8 @@ getPrice(market)               // Price Provider
 
 ## 今後の順番
 
-1. OANDA Retail Data の接続
-2. CFTC COT / TFF の接続
-3. Price Data の接続
-4. 履歴の DB 保存（1h / 24h 変化と週次推移を実データで出す）
+1. ~~OANDA Retail Data の接続~~ → 実装済み。実レスポンスでの検証待ち
+2. ~~CFTC COT / TFF の接続~~ → 実装済み。実レスポンスでの検証待ち
+3. 履歴の DB 保存（Retail の 1h / 24h 変化と履歴チャートを実データで出すのに必要）
+4. Price Data の接続
+5. 必要なら Retail の提供元を追加（IG / FXCM）して Aggregated 表示にする
