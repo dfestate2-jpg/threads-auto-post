@@ -21,6 +21,15 @@ export const env = {
   get lineChannelSecret() {
     return required('LINE_CHANNEL_SECRET')
   },
+  /**
+   * 未設定でも例外にしない版。
+   * Lステップ経由の転送は転送用トークンでも受理できるため、
+   * 顧客対応チャネルのシークレットが未設定というだけで
+   * 受け口全体が 500 になることを避ける。
+   */
+  get optionalLineChannelSecret() {
+    return optional('LINE_CHANNEL_SECRET')
+  },
   get lineChannelAccessToken() {
     return required('LINE_CHANNEL_ACCESS_TOKEN')
   },

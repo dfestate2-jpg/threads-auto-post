@@ -23,15 +23,22 @@ export interface RelayAuthInput {
   signature: string | null
   /** ヘッダー or クエリから取り出した転送用トークン（無ければ null） */
   presentedToken: string | null
-  channelSecret: string
+  /** 未設定なら署名経路は使わず、転送用トークンだけで判定する */
+  channelSecret?: string
   notifyChannelSecret?: string
   /** 未設定ならトークン経路は無効（署名のみ受理） */
   expectedToken?: string
 }
 
 export function authenticateRelay(input: RelayAuthInput): RelayAuthResult {
-  if (input.signature) {
-    if (verifyLineSignature(input.rawBody, input.signature, input.channelSecret)) {
+  /**
+   * 署名が付いていても、照合する鍵が1つも無ければ検証しようがない。
+   * その場合は署名を無いものとして扱い、転送用トークンでの判定に進む。
+   */
+  const canVerifySignature = Boolean(input.channelSecret || input.notifyChannelSecret)
+
+  if (input.signature && canVerifySignature) {
+    if (input.channelSecret && verifyLineSignature(input.rawBody, input.signature, input.channelSecret)) {
       return { ok: true, via: 'LINE_SIGNATURE', channel: 'MAIN' }
     }
     if (

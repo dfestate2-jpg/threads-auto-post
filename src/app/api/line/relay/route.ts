@@ -28,7 +28,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     rawBody,
     signature: request.headers.get('x-line-signature'),
     presentedToken: readPresentedToken(request),
-    channelSecret: env.lineChannelSecret,
+    channelSecret: env.optionalLineChannelSecret,
     notifyChannelSecret: env.lineNotifyChannelSecret,
     expectedToken: env.lstepRelayToken,
   })
