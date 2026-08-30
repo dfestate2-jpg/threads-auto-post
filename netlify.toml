@@ -10,6 +10,13 @@
   # 対してアプリが公開されるより、デプロイが止まるほうが安全なため）。
   command = "npm run build:deploy"
 
+  # Next.js のビルド成果物の場所。
+  # 明示しないと Netlify の UI 側の設定（既定ではリポジトリのルート）が使われ、
+  # 「publish directory cannot be the same as the base directory」で
+  # @netlify/plugin-nextjs が失敗する。netlify.toml は UI 設定より優先されるため、
+  # ここに書いておけば UI の状態に関係なく正しい値になる。
+  publish = ".next"
+
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
