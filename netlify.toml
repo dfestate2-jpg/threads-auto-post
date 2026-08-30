@@ -10,6 +10,16 @@
   # 対してアプリが公開されるより、デプロイが止まるほうが安全なため）。
   command = "npm run build:deploy"
 
+# プルリクエストのプレビューでは **マイグレーションを実行しない**。
+#
+# デプロイプレビューも本番と同じ環境変数（＝本番DB）を見るため、
+# ここで prisma migrate deploy を走らせると
+# **マージされていないPRのマイグレーションが本番DBに適用されてしまう。**
+# プレビューはビルドが通るかどうかを見るためのものなので、DBには触らせない。
+# next build は DB に接続しないため、これだけでプレビューは成立する。
+[context.deploy-preview]
+  command = "npm run build"
+
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
