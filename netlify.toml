@@ -17,6 +17,18 @@
   # ここに書いておけば UI の状態に関係なく正しい値になる。
   publish = ".next"
 
+# 本番以外（PRのプレビュー、ブランチデプロイ）ではマイグレーションを実行しない。
+#
+# 理由：プレビュー用のビルドも本番と同じ環境変数を読むため、既定のままだと
+# PRを立てるたびに本番DBのスキーマが書き換わる。さらに本番ビルドと同時に
+# 走るとマイグレーションのロックを奪い合って両方が落ちる。
+# 本番のデプロイだけがDBを変更する、という一方向の関係にしておく。
+[context.deploy-preview]
+  command = "npm run build"
+
+[context.branch-deploy]
+  command = "npm run build"
+
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
