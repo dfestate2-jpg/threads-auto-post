@@ -1,6 +1,6 @@
 import { Direction, HandlingStatus, ReplyState } from '@prisma/client'
 
-import { dateKeyOf, instantAtDayMinutes } from '@/lib/domain/time'
+import { startOfDayIn } from '@/lib/domain/time'
 import { prisma } from '@/lib/prisma'
 
 export interface DashboardStats {
@@ -19,7 +19,7 @@ export interface DashboardStats {
 
 /** タイムゾーン基準の「今日の 00:00」 */
 export function startOfTodayIn(timezone: string, now = new Date()): Date {
-  return instantAtDayMinutes(dateKeyOf(now, timezone), 0, timezone)
+  return startOfDayIn(timezone, now)
 }
 
 /**

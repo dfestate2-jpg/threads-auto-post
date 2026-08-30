@@ -1,4 +1,4 @@
-import { HandlingStatus } from '@prisma/client'
+import { ActionType, CustomerStatus, FollowUpPriority, HandlingStatus } from '@prisma/client'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
@@ -7,6 +7,7 @@ import { assertSameOrigin, handleApiError, jsonError } from '@/lib/http'
 import { prisma } from '@/lib/prisma'
 import { loadPolicyContext } from '@/lib/services/context'
 import { markResolvedManually, rescheduleConversation } from '@/lib/services/conversation'
+import { loadFollowUpContext, recomputeCustomer, recordFollowUpAction } from '@/lib/services/followUp'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -20,7 +21,33 @@ const schema = z.object({
   handlingStatus: z.nativeEnum(HandlingStatus).optional(),
   /** 楽観ロック用。会話の version を送る */
   version: z.number().int().optional(),
+
+  // --- 追客管理 ---
+  phone: z.string().max(40).nullable().optional(),
+  email: z.string().max(200).nullable().optional(),
+  inquirySource: z.string().max(80).nullable().optional(),
+  desiredArea: z.string().max(200).nullable().optional(),
+  desiredRent: z.number().int().min(0).max(100_000_000).nullable().optional(),
+  moveInTiming: z.string().max(80).nullable().optional(),
+  moveInBy: z.string().datetime().nullable().optional(),
+  requirements: z.string().max(2000).nullable().optional(),
+  /** 追客ステータス。変更すると追客履歴に残り、次回アクションが引き直される */
+  status: z.nativeEnum(CustomerStatus).optional(),
+  priorityOverride: z.nativeEnum(FollowUpPriority).nullable().optional(),
+  autoFollowEnabled: z.boolean().optional(),
+  /** 後から項目を追加するための自由項目 */
+  customFields: z.record(z.string(), z.unknown()).nullable().optional(),
 })
+
+/** 顧客情報のうち、そのまま保存してよい追客項目 */
+const FOLLOW_UP_TEXT_FIELDS = [
+  'phone',
+  'email',
+  'inquirySource',
+  'desiredArea',
+  'moveInTiming',
+  'requirements',
+] as const
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }): Promise<NextResponse> {
   try {
@@ -47,12 +74,43 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (body.note !== undefined) customerData.note = body.note
     if (body.assigneeId !== undefined) customerData.assigneeId = body.assigneeId
     if (body.reminderIntervalMinutes !== undefined) customerData.reminderIntervalMinutes = body.reminderIntervalMinutes
+    for (const field of FOLLOW_UP_TEXT_FIELDS) {
+      if (body[field] !== undefined) customerData[field] = body[field]
+    }
+    if (body.desiredRent !== undefined) customerData.desiredRent = body.desiredRent
+    if (body.moveInBy !== undefined) customerData.moveInBy = body.moveInBy ? new Date(body.moveInBy) : null
+    if (body.priorityOverride !== undefined) customerData.priorityOverride = body.priorityOverride
+    if (body.autoFollowEnabled !== undefined) customerData.autoFollowEnabled = body.autoFollowEnabled
+    if (body.customFields !== undefined) customerData.customFields = body.customFields ?? undefined
 
     if (Object.keys(customerData).length > 0) {
       await prisma.customer.update({ where: { id }, data: customerData })
     }
 
     const ctx = await loadPolicyContext()
+    const followUpCtx = await loadFollowUpContext()
+
+    // 追客ステータスの変更は履歴に残す。次回アクションはそこから自動で引き直される
+    if (body.status !== undefined && body.status !== customer.status) {
+      await recordFollowUpAction(
+        {
+          customerId: id,
+          staffId: session.staffId,
+          actionType: ActionType.OTHER,
+          nextStatus: body.status,
+          result: '画面でステータスを変更',
+          touchContact: false,
+        },
+        followUpCtx,
+      )
+    } else if (
+      body.priorityOverride !== undefined ||
+      body.autoFollowEnabled !== undefined ||
+      body.moveInBy !== undefined
+    ) {
+      // 優先度の判定材料が変わったので引き直す
+      await recomputeCustomer(prisma, id, followUpCtx)
+    }
 
     if (body.handlingStatus !== undefined && customer.conversation) {
       if (body.handlingStatus === HandlingStatus.DONE) {

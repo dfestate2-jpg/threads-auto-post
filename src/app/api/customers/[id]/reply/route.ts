@@ -1,4 +1,4 @@
-import { ResolvedVia } from '@prisma/client'
+import { FollowUpSource, ResolvedVia } from '@prisma/client'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
@@ -9,6 +9,7 @@ import { LineApiError, pushTextMessage } from '@/lib/line/client'
 import { prisma } from '@/lib/prisma'
 import { loadPolicyContext } from '@/lib/services/context'
 import { recordOutboundMessage } from '@/lib/services/conversation'
+import { loadFollowUpContext, onStaffOutbound } from '@/lib/services/followUp'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -34,6 +35,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const customer = await prisma.customer.findUnique({ where: { id } })
     if (!customer) return jsonError('顧客が見つかりません', 404)
     if (customer.blocked) return jsonError('この顧客はブロック済みのため送信できません', 409)
+    if (!customer.lineUserId) return jsonError('この顧客はLINEが未連携のため送信できません', 409)
 
     try {
       await pushTextMessage(env.lineChannelAccessToken, customer.lineUserId, parsed.data.text)
@@ -47,11 +49,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     // 送信が成功したときだけ「対応済み」にする（送信失敗で通知が止まる事故を防ぐ）
     const ctx = await loadPolicyContext()
+    const sentAt = new Date()
     const result = await recordOutboundMessage(
       {
         customerId: id,
         text: parsed.data.text,
-        sentAt: new Date(),
+        sentAt,
         sentByStaffId: session.staffId,
         source: 'ADMIN_CONSOLE',
         via: ResolvedVia.ADMIN_REPLY,
@@ -59,6 +62,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       },
       ctx,
     )
+
+    // 送信は追客の1手でもある。追客履歴・次回アクションもここで自動更新する
+    await onStaffOutbound(id, sentAt, session.staffId, await loadFollowUpContext(sentAt), {
+      source: FollowUpSource.ADMIN_REPLY,
+      note: parsed.data.text.slice(0, 200),
+    })
 
     return NextResponse.json({ ok: true, ...result })
   } catch (e) {

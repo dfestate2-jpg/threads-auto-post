@@ -9,6 +9,7 @@ import { Prisma, PrismaClient, StaffRole, UserRole } from '@prisma/client'
 
 import { hashPassword } from '@/lib/auth/password'
 import { DEFAULT_BUSINESS_HOURS } from '@/lib/domain/businessHours'
+import { ensureFollowUpDefaults } from './followUpDefaults'
 
 /** 依頼の例：1時間→担当者 / 3時間→担当者＋責任者 / 6時間→管理者 */
 const DEFAULT_ESCALATION_RULES = [
@@ -56,6 +57,9 @@ export async function ensureBaselineData(db: Db): Promise<void> {
       update: {},
     })
   }
+
+  // 追客ルールとLINEテンプレートの初期値
+  await ensureFollowUpDefaults(db)
 
   for (const [date, name] of HOLIDAYS_2026) {
     await db.businessHoliday.upsert({

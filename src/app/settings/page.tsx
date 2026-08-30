@@ -1,3 +1,5 @@
+import Link from 'next/link'
+
 import { AppShell } from '@/components/AppShell'
 import { ChannelTable } from '@/components/settings/ChannelTable'
 import { EscalationForm } from '@/components/settings/EscalationForm'
@@ -40,7 +42,12 @@ export default async function SettingsPage() {
 
   return (
     <AppShell>
-      <h1 className="mb-4 text-xl font-bold">設定</h1>
+      <div className="mb-4 flex items-center justify-between">
+        <h1 className="text-xl font-bold">設定</h1>
+        <Link href="/settings/followup" className="btn-secondary px-3 py-1.5 text-sm">
+          追客ルール・LINEテンプレート
+        </Link>
+      </div>
       <div className="space-y-6">
         <GeneralForm initial={general} />
         <EscalationForm

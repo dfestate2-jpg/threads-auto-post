@@ -3,8 +3,10 @@ import Link from 'next/link'
 import { LogoutButton } from './LogoutButton'
 
 const NAV = [
-  { href: '/', label: 'ダッシュボード' },
-  { href: '/customers', label: '未返信一覧' },
+  { href: '/', label: '今日やること' },
+  { href: '/customers', label: '顧客' },
+  { href: '/reminders', label: '未返信' },
+  { href: '/admin', label: '管理者' },
   { href: '/settings', label: '設定' },
 ]
 
@@ -14,8 +16,10 @@ export function AppShell({ children, alert }: { children: React.ReactNode; alert
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-6">
-            <span className="text-sm font-bold">公式LINE 未返信リマインド</span>
-            <nav className="flex gap-4">
+            <Link href="/" className="text-sm font-bold">
+              追客管理
+            </Link>
+            <nav className="flex flex-wrap gap-4">
               {NAV.map((n) => (
                 <Link key={n.href} href={n.href} className="text-sm text-slate-600 hover:text-slate-900">
                   {n.label}

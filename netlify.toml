@@ -17,3 +17,8 @@
 # netlify/functions/reminders-cron.mts が /api/cron/reminders を呼び出す。
 [functions."reminders-cron"]
   schedule = "*/5 * * * *"
+
+# 1時間ごとに追客処理を起動する。
+# netlify/functions/followups-cron.mts が /api/cron/followups を呼び出す。
+[functions."followups-cron"]
+  schedule = "0 * * * *"

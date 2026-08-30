@@ -88,5 +88,9 @@ jobs:
         run: npx prisma migrate deploy
 
       # 通知はローカルの受信サーバーへ送るため、LINE / Slack への接続は発生しない
-      - name: Integration check
+      - name: Integration check (未返信リマインド)
         run: npx tsx scripts/e2e-check.ts
+
+      # 追客の自動遷移・優先度・今日やることの仕分けを実DBで検証する
+      - name: Integration check (追客管理)
+        run: npx tsx scripts/followup-check.ts
