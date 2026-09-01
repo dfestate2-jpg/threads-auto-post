@@ -255,4 +255,5 @@ DATABASE_URL=postgresql://... npx tsx scripts/e2e-check.ts
 | 「要確認」が増える | 送信失敗が3回続いた／通知先が解決できない／ブロック済み顧客。顧客詳細のリマインド履歴に理由が残っている |
 | 管理画面にログインできない | 5回失敗で15分ロックされる。解除は `users.lockedUntil` を NULL にする |
 | デプロイが `P1000: Authentication failed` で失敗する | 接続文字列のパスワードが違う。サーバーには到達できているのでホスト・ポートは正しい。パスワードに記号（`@` `#` `%` `/` など）が入っているとURLとして壊れるため、記号なしのパスワードに変えて `DATABASE_URL`（6543）と `DIRECT_URL`（5432）を作り直す |
+| 社内通知の「対応済みにする」ボタンが無反応／連携コードが登録できない | チャネル②のWebhookが401か500を返している。`LINE_NOTIFY_CHANNEL_SECRET` がチャネル②のものか確認する。なお `LINE_CHANNEL_SECRET`（チャネル①）は未設定でもよい設計になっている |
 | デプロイが `publish directory cannot be the same as the base directory` で失敗する | 公開ディレクトリがリポジトリのルートになっている。`netlify.toml` の `publish = ".next"` が効いているか確認する（netlify.toml はUI設定より優先される） |

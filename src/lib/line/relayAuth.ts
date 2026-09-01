@@ -10,7 +10,7 @@
  * どちらも通らなければ 401。**「とりあえず通す」は絶対にしない**
  * ——顧客の会話状態を書き換える入口なので、ここだけは通知漏れより誤受理のほうが重い。
  */
-import { safeEqual, verifyLineSignature } from './signature'
+import { resolveChannelBySignature, safeEqual } from './signature'
 
 export type RelayAuthResult =
   | { ok: true; via: 'LINE_SIGNATURE'; channel: 'MAIN' | 'NOTIFY' }
@@ -38,15 +38,11 @@ export function authenticateRelay(input: RelayAuthInput): RelayAuthResult {
   const canVerifySignature = Boolean(input.channelSecret || input.notifyChannelSecret)
 
   if (input.signature && canVerifySignature) {
-    if (input.channelSecret && verifyLineSignature(input.rawBody, input.signature, input.channelSecret)) {
-      return { ok: true, via: 'LINE_SIGNATURE', channel: 'MAIN' }
-    }
-    if (
-      input.notifyChannelSecret &&
-      verifyLineSignature(input.rawBody, input.signature, input.notifyChannelSecret)
-    ) {
-      return { ok: true, via: 'LINE_SIGNATURE', channel: 'NOTIFY' }
-    }
+    const channel = resolveChannelBySignature(input.rawBody, input.signature, {
+      main: input.channelSecret,
+      notify: input.notifyChannelSecret,
+    })
+    if (channel) return { ok: true, via: 'LINE_SIGNATURE', channel }
     // 署名が付いているのに合わない = 偽装か鍵違い。トークンでの救済はしない
     return { ok: false, reason: 'BAD_SIGNATURE' }
   }
