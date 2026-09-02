@@ -5,6 +5,7 @@ import type { LineWebhookBody } from '@/lib/line/types'
 import { env } from '@/lib/env'
 import { loadPolicyContext } from '@/lib/services/context'
 import { processLineEvents, type ChannelKind } from '@/lib/services/lineWebhook'
+import { recordRelayReceipt } from '@/lib/services/relayReceipt'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -28,6 +29,7 @@ export async function POST(request: Request): Promise<NextResponse> {
    */
   if (!mainSecret && !notifySecret) {
     console.error('[line-webhook] LINE_CHANNEL_SECRET / LINE_NOTIFY_CHANNEL_SECRET がどちらも未設定です')
+    await recordRelayReceipt({ endpoint: 'WEBHOOK', accepted: false, detail: 'NO_CHANNEL_SECRET' })
     return NextResponse.json({ error: 'invalid signature' }, { status: 401 })
   }
 
@@ -37,6 +39,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   })
   if (!channel) {
     console.warn('[line-webhook] signature verification failed')
+    await recordRelayReceipt({ endpoint: 'WEBHOOK', accepted: false, detail: 'BAD_SIGNATURE' })
     return NextResponse.json({ error: 'invalid signature' }, { status: 401 })
   }
 
@@ -48,6 +51,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const events = Array.isArray(body.events) ? body.events : []
+  await recordRelayReceipt({
+    endpoint: 'WEBHOOK',
+    accepted: true,
+    detail: channel,
+    eventCount: events.length,
+  })
   if (events.length === 0) return NextResponse.json({ ok: true }) // LINE の疎通確認
 
   await processLineEvents(events, channel, await loadPolicyContext())

@@ -446,6 +446,32 @@ model AuditLog {
 }
 
 /// Cron の死活記録（外部監視から参照する）
+/// Webhook 受け口に届いたリクエストの受信記録。
+///
+/// 「入口が詰まっていることに気づけない」のが、このシステムで一番怖い壊れ方。
+/// Lステップの転送が止まっても、設定を間違えても、外形上はただ静かになるだけで
+/// 未返信の検知が丸ごと止まる。ホスティング事業者のログを掘らないと分からない、
+/// という状態にはしない。管理画面から直接見えるところに残す。
+///
+/// 本文は保存しない。届いたかどうかと、なぜ弾いたか（または何件取り出せたか）だけを持つ。
+model RelayReceipt {
+  id         String   @id @default(cuid())
+  receivedAt DateTime @default(now())
+  /// 受け口の種類。'RELAY'（Lステップ転送） / 'WEBHOOK'（LINEから直接）
+  endpoint   String
+  /// 受理できたか
+  accepted   Boolean
+  /// 受理の経路（LINE_SIGNATURE / RELAY_TOKEN）または拒否理由（BAD_TOKEN 等）
+  detail     String
+  /// 取り出せたイベント数。受理できなかった場合は 0
+  eventCount Int      @default(0)
+  /// 届いたJSONの「形」だけ（値は含まない）。転送形式が想定外だったときの手がかり
+  shape      String?
+
+  @@index([receivedAt])
+  @@map("relay_receipts")
+}
+
 model CronRun {
   id         String    @id @default(cuid())
   job        String
