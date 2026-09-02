@@ -96,7 +96,13 @@ netlify deploy --prod
 ```
 
 `netlify.toml` と `netlify/functions/reminders-cron.mts` により、
-**5分ごとのスケジュール実行**が自動で設定される。
+**5分ごとのスケジュール実行**が設定される。
+
+> ⚠️ **Netlify のスケジュール実行が起動しない事象を確認している。**
+> 管理画面上は Schedule も Next execution も表示され、「Run now」も成功と出るのに、
+> 関数ログが空のまま、`/settings` の受信状況にも「定期実行」の行が出ない、という状態になる。
+> デプロイ後に受信状況へ「定期実行」の行が出ない場合は、粘らずに
+> [2-C](#2-c-スケジューラだけ外部に置く場合) の外部スケジューラへ切り替えること。
 
 ### 2-B. Vercel
 
@@ -114,21 +120,59 @@ vercel --prod
 
 ### 2-C. スケジューラだけ外部に置く場合
 
-ホスティング側に Cron が無い場合は、`.github/workflows/cron-reminders.yml`（GitHub Actions）または
-[cron-job.org](https://cron-job.org/) 等から下記を叩く。
+**ホスティング側のスケジュール機能が動かない場合は、こちらに切り替える。**
+実際に Netlify Scheduled Functions が「実行成功」と表示されるのに関数が起動しない
+（ログも空、`/settings` の受信状況にも「定期実行」の行が出ない）事象が発生したため、
+本番はこの構成を正とする。
 
-> `cron-reminders.yml` は **既定では自動実行しない**（`workflow_dispatch` のみ）。
-> Netlify / Vercel のスケジューラを使う構成では不要なため、未デプロイ状態で5分ごとに
-> 失敗し続けないようにしてある。使う場合は次の2点を行うこと。
-> 1. リポジトリの `Settings > Secrets and variables > Actions` に `APP_BASE_URL` と `CRON_SECRET` を登録
-> 2. ワークフロー内の `schedule:` のコメントを外す
+`.github/workflows/cron-reminders.yml`（GitHub Actions）または
+[cron-job.org](https://cron-job.org/) 等の無料スケジューラから下記を叩く。
+
+#### 起動URL（ヘッダー不要）
+
+```
+https://<host>/api/cron/reminders?secret=<CRON_SECRET>
+```
+
+- **GET / POST どちらでもよい。** URLを開くだけで起動する。
+- ヘッダーで渡す形（`x-cron-secret` または `Authorization: Bearer`）も引き続き使える。
+  両方ある場合はヘッダーが優先される。
+- **5分間隔**にする。1回や2回起動が失われても、次の起動で期限超過分がまとめて回収される。
+
+> ⚠️ **この URL 自体が認証情報。** リポジトリにコミットしない。共有はパスワード管理ツール経由で行う。
+> ただしこの値で起動できるのは「期限が来たリマインドを送る」処理だけで、
+> データの閲覧も変更もできない。漏れた場合は `CRON_SECRET` を変更してスケジューラ側も更新する。
+
+#### cron-job.org の設定手順
+
+1. アカウントを作る（無料）
+2. **Create cronjob**
+3. **URL** に上記の起動URLを貼る
+4. **Execution schedule** を `Every 5 minutes` にする
+5. **CREATE** を押す
+
+#### GitHub Actions を使う場合
+
+`cron-reminders.yml` は **既定では自動実行しない**（`workflow_dispatch` のみ）。
+使う場合は次の2点を行うこと。
+
+1. リポジトリの `Settings > Secrets and variables > Actions` に `APP_BASE_URL` と `CRON_SECRET` を登録
+2. ワークフロー内の `schedule:` のコメントを外す
 
 ```bash
 curl -X POST https://<host>/api/cron/reminders -H "x-cron-secret: $CRON_SECRET"
 ```
 
 > GitHub Actions のスケジュールは数分〜十数分の遅延が発生することがある。
-> リマインド精度を重視するなら Vercel Cron / Netlify Scheduled Functions を推奨。
+> 遅延が許容できない場合は cron-job.org のような専用サービスを使う。
+
+#### 動いていることの確認
+
+1. `/settings` の **受信状況** に「定期実行」の行が5分おきに増えていく
+2. `/api/health` の `cronHealthy` が `true`、`lastRunAt` が直近の時刻になる
+
+どちらも変わらない場合は、スケジューラ側の実行履歴でHTTPステータスを見る。
+401 なら `CRON_SECRET` の不一致、届いていないならURLの誤り。
 
 ### 2-D. マイグレーションと初期データ
 

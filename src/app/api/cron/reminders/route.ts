@@ -16,8 +16,31 @@ export const maxDuration = 60
  * 期限（nextReminderAt）を過ぎたものを毎回まとめて処理するため、
  * 起動が数回失敗しても次の起動で確実に回収され、通知漏れが起きない。
  */
+function readSecretFromQuery(request: Request): string | null {
+  try {
+    const params = new URL(request.url).searchParams
+    return params.get('secret') ?? params.get('cron_secret') ?? params.get('token')
+  } catch {
+    return null
+  }
+}
+
 async function handle(request: Request): Promise<NextResponse> {
-  const header = request.headers.get('x-cron-secret') ?? request.headers.get('authorization')?.replace(/^Bearer /, '')
+  /**
+   * 秘密の値はヘッダーで受けるのが本来だが、**クエリ文字列でも受ける**。
+   *
+   * 無料のスケジューラーはURLを叩くだけでヘッダーを付けられないものが多く、
+   * ヘッダー必須にすると「起動手段がホスティング事業者のスケジュール機能しかない」
+   * 状態になる。そこが動かなくなるとリマインドが丸ごと止まる（実際に止まった）。
+   * 起動経路を1つに縛らないことのほうが、この用途では重要と判断した。
+   *
+   * URLに載せた値はアクセスログ等に残りうるが、この値で起動できるのは
+   * 「期限が来たリマインドを送る」処理だけで、データの閲覧も変更もできない。
+   */
+  const header =
+    request.headers.get('x-cron-secret') ??
+    request.headers.get('authorization')?.replace(/^Bearer /, '') ??
+    readSecretFromQuery(request)
 
   /**
    * 弾いた場合も必ず記録する。
