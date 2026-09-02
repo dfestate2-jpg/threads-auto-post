@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { env } from '@/lib/env'
 import { safeEqual } from '@/lib/line/signature'
 import { runReminderJob } from '@/lib/services/reminderRunner'
+import { recordRelayReceipt } from '@/lib/services/relayReceipt'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -17,7 +18,22 @@ export const maxDuration = 60
  */
 async function handle(request: Request): Promise<NextResponse> {
   const header = request.headers.get('x-cron-secret') ?? request.headers.get('authorization')?.replace(/^Bearer /, '')
-  if (!safeEqual(header, env.cronSecret)) {
+
+  /**
+   * 弾いた場合も必ず記録する。
+   * リマインドが飛ばないとき、原因が「起動が届いていない」のか
+   * 「届いたが認証で弾かれた」のかは外から区別がつかない。
+   * ここに記録が無ければ前者、あれば後者、と管理画面だけで切り分けられるようにする。
+   */
+  const expected = env.optionalCronSecret
+  if (!expected) {
+    console.error('[cron] CRON_SECRET が未設定です')
+    await recordRelayReceipt({ endpoint: 'CRON', accepted: false, detail: 'NO_CRON_SECRET' })
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
+  if (!safeEqual(header, expected)) {
+    console.warn('[cron] 認証に失敗しました')
+    await recordRelayReceipt({ endpoint: 'CRON', accepted: false, detail: 'BAD_CRON_SECRET' })
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
@@ -26,6 +42,7 @@ async function handle(request: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: true, ...summary })
   } catch (e) {
     console.error('[cron] reminder job failed', e)
+    await recordRelayReceipt({ endpoint: 'CRON', accepted: true, detail: 'JOB_FAILED' })
     return NextResponse.json({ ok: false, error: 'job failed' }, { status: 500 })
   }
 }

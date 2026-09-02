@@ -71,6 +71,14 @@ export const env = {
   get cronSecret() {
     return required('CRON_SECRET')
   },
+  /**
+   * 未設定でも例外にしない版。
+   * 定期実行の受け口で使う。未設定というだけで 500 になると
+   * 「設定漏れ」と「認証失敗」が外から区別できず、原因追跡が止まる。
+   */
+  get optionalCronSecret() {
+    return optional('CRON_SECRET')
+  },
   get sessionSecret() {
     return required('SESSION_SECRET')
   },

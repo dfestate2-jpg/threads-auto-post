@@ -13,6 +13,7 @@ export interface RelayReceiptView {
 const ENDPOINT_LABEL: Record<string, string> = {
   RELAY: 'Lステップ転送',
   WEBHOOK: 'LINE直接',
+  CRON: '定期実行',
 }
 
 /** 拒否理由を、次にどこを直せばよいかが分かる日本語にする */
@@ -21,6 +22,9 @@ const DETAIL_LABEL: Record<string, string> = {
   BAD_TOKEN: 'トークンが一致しない（URLのtokenを確認）',
   BAD_SIGNATURE: '署名が一致しない（チャネルシークレットを確認）',
   NO_CHANNEL_SECRET: 'チャネルシークレットが未設定',
+  NO_CRON_SECRET: 'CRON_SECRET が未設定',
+  BAD_CRON_SECRET: 'CRON_SECRET が一致しない',
+  JOB_FAILED: 'リマインド処理でエラー',
   LINE_SIGNATURE: 'LINE署名で受理',
   RELAY_TOKEN: '転送用トークンで受理',
   MAIN: '顧客対応チャネル',

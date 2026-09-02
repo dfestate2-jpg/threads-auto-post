@@ -250,6 +250,7 @@ DATABASE_URL=postgresql://... npx tsx scripts/e2e-check.ts
 |------|-------------|
 | 顧客メッセージが取り込まれない | ① LINE Developers の Webhook URL と「Webhookの利用」がオン<br/>② `LINE_CHANNEL_SECRET` がチャネル①のものか<br/>③ サーバーログに `signature verification failed` が出ていないか |
 | リマインドが送られない | ① `/api/health` の `cronHealthy`<br/>② `/settings` の通知チャネル（Slack）でテスト送信<br/>③ 顧客の通知間隔が「通知しない」になっていないか<br/>④ 営業時間外でないか<br/>⑤ 顧客詳細の「リマインド送信履歴」の `status` と `error` |
+| 定期実行が動かない（`/api/health` の `cronHealthy` が false） | 管理画面の **設定 → 受信状況** に「定期実行」の行が出ているか。①行が無い＝起動が届いていない（Netlifyのスケジュール実行を疑う。外部スケジューラへの切替は[2-C](#2-c-スケジューラだけ外部に置く場合)）②「CRON_SECRET が一致しない/未設定」＝環境変数の問題 ③「リマインド処理でエラー」＝`cron_runs.error` を見る |
 | 返信したのに通知が続く | LINE公式Managerから返信した可能性。管理画面から返信するか、「対応済みにする」を押す（[07](./07-line-reply-detection.md)） |
 | 通知が多すぎる | `/settings` の既定間隔を2〜3時間に変更するか、顧客ごとに個別設定する |
 | 「要確認」が増える | 送信失敗が3回続いた／通知先が解決できない／ブロック済み顧客。顧客詳細のリマインド履歴に理由が残っている |

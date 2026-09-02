@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 /** 保持件数。診断に使えれば十分で、無制限に貯めても意味がない */
 const KEEP = 200
 
-export type RelayEndpoint = 'RELAY' | 'WEBHOOK'
+export type RelayEndpoint = 'RELAY' | 'WEBHOOK' | 'CRON'
 
 export interface RelayReceiptInput {
   endpoint: RelayEndpoint
