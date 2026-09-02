@@ -62,6 +62,18 @@ async function handle(request: Request): Promise<NextResponse> {
 
   try {
     const summary = await runReminderJob(new Date())
+    /**
+     * 成功も必ず記録する。
+     * 失敗だけを記録すると「行が増えない」が
+     * 「起動が届いていない」と「全部成功している」の両方を意味してしまい、
+     * 管理画面だけでは切り分けられなくなる。
+     */
+    await recordRelayReceipt({
+      endpoint: 'CRON',
+      accepted: true,
+      detail: 'OK',
+      eventCount: summary.sent,
+    })
     return NextResponse.json({ ok: true, ...summary })
   } catch (e) {
     console.error('[cron] reminder job failed', e)

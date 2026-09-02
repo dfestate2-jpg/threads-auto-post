@@ -1,9 +1,18 @@
 import { prisma } from '@/lib/prisma'
 
-/** 保持件数。診断に使えれば十分で、無制限に貯めても意味がない */
-const KEEP = 200
+/**
+ * 受け口ごとの保持件数。
+ *
+ * **全体で一律に間引いてはいけない。** 定期実行は5分ごと（1日288件）記録されるため、
+ * 全体で200件に絞ると1日たたずに顧客メッセージの記録が押し出されて消える。
+ * 顧客メッセージが届いているかどうかは、この仕組みで一番見たいものなので、
+ * 受け口ごとに独立して残す。
+ */
+const KEEP_PER_ENDPOINT = 100
 
-export type RelayEndpoint = 'RELAY' | 'WEBHOOK' | 'CRON'
+export const RELAY_ENDPOINTS = ['RELAY', 'WEBHOOK', 'CRON'] as const
+
+export type RelayEndpoint = (typeof RELAY_ENDPOINTS)[number]
 
 export interface RelayReceiptInput {
   endpoint: RelayEndpoint
@@ -33,23 +42,26 @@ export async function recordRelayReceipt(input: RelayReceiptInput): Promise<void
         shape: input.shape ?? null,
       },
     })
-    await pruneRelayReceipts()
+    await pruneRelayReceipts(input.endpoint)
   } catch (e) {
     console.warn('[relay-receipt] 記録に失敗しました', { message: (e as Error).message })
   }
 }
 
-/** 直近 KEEP 件だけ残す */
-async function pruneRelayReceipts(): Promise<void> {
+/** その受け口の直近 KEEP_PER_ENDPOINT 件だけ残す */
+async function pruneRelayReceipts(endpoint: RelayEndpoint): Promise<void> {
   const cutoff = await prisma.relayReceipt.findMany({
+    where: { endpoint },
     orderBy: { receivedAt: 'desc' },
-    skip: KEEP,
+    skip: KEEP_PER_ENDPOINT,
     take: 1,
     select: { receivedAt: true },
   })
   const oldest = cutoff[0]
   if (!oldest) return
-  await prisma.relayReceipt.deleteMany({ where: { receivedAt: { lte: oldest.receivedAt } } })
+  await prisma.relayReceipt.deleteMany({
+    where: { endpoint, receivedAt: { lte: oldest.receivedAt } },
+  })
 }
 
 export interface RelayReceiptRow {
@@ -62,6 +74,24 @@ export interface RelayReceiptRow {
   shape: string | null
 }
 
-export async function listRecentRelayReceipts(take = 20): Promise<RelayReceiptRow[]> {
-  return prisma.relayReceipt.findMany({ orderBy: { receivedAt: 'desc' }, take })
+/**
+ * 受け口ごとに直近 perEndpoint 件ずつ取って、時刻順に並べ直す。
+ *
+ * 単純に「全体の直近N件」を出すと、頻度の高い定期実行だけで画面が埋まり、
+ * 数時間に1件しか来ない顧客メッセージの記録が見えなくなる。
+ * 頻度の違う受け口を1つの表で比べられるようにするのがここの役目。
+ */
+export async function listRecentRelayReceipts(perEndpoint = 8): Promise<RelayReceiptRow[]> {
+  const perEndpointRows = await Promise.all(
+    RELAY_ENDPOINTS.map((endpoint) =>
+      prisma.relayReceipt.findMany({
+        where: { endpoint },
+        orderBy: { receivedAt: 'desc' },
+        take: perEndpoint,
+      }),
+    ),
+  )
+  return perEndpointRows
+    .flat()
+    .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime())
 }

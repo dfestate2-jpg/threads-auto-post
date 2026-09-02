@@ -24,6 +24,7 @@ const DETAIL_LABEL: Record<string, string> = {
   NO_CHANNEL_SECRET: 'チャネルシークレットが未設定',
   NO_CRON_SECRET: 'CRON_SECRET が未設定',
   BAD_CRON_SECRET: 'CRON_SECRET が一致しない',
+  OK: '正常に実行',
   JOB_FAILED: 'リマインド処理でエラー',
   LINE_SIGNATURE: 'LINE署名で受理',
   RELAY_TOKEN: '転送用トークンで受理',
@@ -31,13 +32,30 @@ const DETAIL_LABEL: Record<string, string> = {
   NOTIFY: '社内通知チャネル',
 }
 
+/**
+ * 「届いて認証も通ったが、処理そのものが失敗した」を緑の受理で見せてはいけない。
+ * 見逃してよい状態ではないので、受理とも拒否とも別の色で出す。
+ */
+function renderResult(r: RelayReceiptView) {
+  if (r.detail === 'JOB_FAILED') {
+    return <span className="rounded bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-800">エラー</span>
+  }
+  return r.accepted ? (
+    <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-800">受理</span>
+  ) : (
+    <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-800">拒否</span>
+  )
+}
+
 export function RelayReceiptTable({ rows, timezone }: { rows: RelayReceiptView[]; timezone: string }) {
   return (
     <section className="card p-4">
       <h2 className="mb-1 text-sm font-bold">受信状況</h2>
       <p className="mb-3 text-xs text-slate-500">
-        顧客メッセージの入口に届いたリクエストの記録です。ここが空のままなら、Lステップの転送設定か
-        LINEのWebhook設定が効いていません。メッセージ本文は保存していません。
+        システムに届いたリクエストの記録です。顧客メッセージの入口（Lステップ転送 / LINE直接）と、
+        リマインドの定期実行の両方が出ます。「定期実行」の行が5分おきに増えていない場合は
+        スケジューラが動いていません。件数は、入口なら受け取ったイベント数、定期実行なら送信したリマインド数です。
+        メッセージ本文は保存していません。
       </p>
 
       {rows.length === 0 ? (
@@ -66,13 +84,7 @@ export function RelayReceiptTable({ rows, timezone }: { rows: RelayReceiptView[]
               <tr key={r.id} className="border-b border-slate-100 last:border-0">
                 <td className="py-2 text-xs text-slate-600">{formatDateTimeJa(r.receivedAt, timezone)}</td>
                 <td className="text-xs">{ENDPOINT_LABEL[r.endpoint] ?? r.endpoint}</td>
-                <td>
-                  {r.accepted ? (
-                    <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-800">受理</span>
-                  ) : (
-                    <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-800">拒否</span>
-                  )}
-                </td>
+<td>{renderResult(r)}</td>
                 <td className="text-xs text-slate-600">
                   {DETAIL_LABEL[r.detail] ?? r.detail}
                   {/*

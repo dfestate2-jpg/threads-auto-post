@@ -22,7 +22,7 @@ export default async function SettingsPage() {
     prisma.staff.findMany({ orderBy: [{ active: 'desc' }, { name: 'asc' }] }),
     prisma.notificationChannel.findMany({ orderBy: { createdAt: 'asc' } }),
     prisma.businessHoliday.findMany({ orderBy: { date: 'asc' }, take: 200 }),
-    listRecentRelayReceipts(20),
+    listRecentRelayReceipts(8),
   ])
 
   const general: GeneralSettings = {
