@@ -1,0 +1,49 @@
+{
+  "name": "real-estate-followup-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "不動産仲介の自動追客管理システム（公式LINE未返信リマインドを内包）",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "build:deploy": "prisma migrate deploy && npm run build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "seed": "tsx prisma/seed.ts",
+    "postinstall": "prisma generate",
+    "seed:demo": "tsx scripts/demo-seed.ts",
+    "followups:run": "tsx scripts/run-followups.ts",
+    "check:followup": "tsx scripts/followup-check.ts",
+    "check:reminder": "tsx scripts/e2e-check.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "6.2.1",
+    "date-fns": "4.1.0",
+    "date-fns-tz": "3.2.0",
+    "next": "15.1.6",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.7",
+    "@types/react": "19.0.7",
+    "@types/react-dom": "19.0.3",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.5.1",
+    "prisma": "6.2.1",
+    "tailwindcss": "3.4.17",
+    "tsx": "4.19.2",
+    "typescript": "5.7.3",
+    "vitest": "2.1.8"
+  }
+}

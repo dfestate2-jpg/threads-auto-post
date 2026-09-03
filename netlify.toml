@@ -1,0 +1,34 @@
+[build.environment]
+  # Netlify の既定バージョンに引きずられないよう固定する。
+  # Next.js 15 / Prisma 6 の動作確認を行っているバージョンに合わせている。
+  NODE_VERSION = "22"
+
+[build]
+  # build:deploy = prisma migrate deploy && prisma generate && next build
+  # デプロイのたびに未適用のマイグレーションを自動で適用する。
+  # DBに到達できない場合はデプロイを失敗させる（未マイグレーションのDBに
+  # 対してアプリが公開されるより、デプロイが止まるほうが安全なため）。
+  command = "npm run build:deploy"
+
+# プルリクエストのプレビューでは **マイグレーションを実行しない**。
+#
+# デプロイプレビューも本番と同じ環境変数（＝本番DB）を見るため、
+# ここで prisma migrate deploy を走らせると
+# **マージされていないPRのマイグレーションが本番DBに適用されてしまう。**
+# プレビューはビルドが通るかどうかを見るためのものなので、DBには触らせない。
+# next build は DB に接続しないため、これだけでプレビューは成立する。
+[context.deploy-preview]
+  command = "npm run build"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# 5分ごとにリマインド処理を起動する。
+# netlify/functions/reminders-cron.mts が /api/cron/reminders を呼び出す。
+[functions."reminders-cron"]
+  schedule = "*/5 * * * *"
+
+# 1時間ごとに追客処理を起動する。
+# netlify/functions/followups-cron.mts が /api/cron/followups を呼び出す。
+[functions."followups-cron"]
+  schedule = "0 * * * *"

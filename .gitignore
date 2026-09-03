@@ -1,0 +1,19 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# 環境変数（アクセストークン等を含むため絶対にコミットしない）
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log
+npm-debug.log*
+.vercel
+.netlify

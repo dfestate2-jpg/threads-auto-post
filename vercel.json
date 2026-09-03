@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build:deploy",
+  "crons": [
+    {
+      "path": "/api/cron/reminders",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/followups",
+      "schedule": "0 * * * *"
+    }
+  ]
+}

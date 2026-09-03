@@ -1,0 +1,96 @@
+# PR とデフォルトブランチへの push で、型・ユニットテスト・ビルド・結合確認を実行する。
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# 同じブランチで新しい push があれば古い実行を打ち切る
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------------
+  # 型・ユニットテスト・本番ビルド（DB不要）
+  # ------------------------------------------------------------------
+  check:
+    name: typecheck / test / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      # 全ページが force-dynamic のためビルド時にDB接続は発生しない
+      - name: Production build
+        run: npm run build
+
+  # ------------------------------------------------------------------
+  # 実PostgreSQLに対する結合確認
+  #
+  # このシステムの中核である「二重通知しない」「通知漏れしない」
+  # 「返信済みなら止まる」は、行ロック・UNIQUE制約・トランザクションに
+  # 依存しており、モックでは検証できない。実DBに対して必ず流す。
+  # ------------------------------------------------------------------
+  e2e:
+    name: integration (PostgreSQL)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: reminder_test
+        ports:
+          - 5432:5432
+        # -U/-d を明示しないと healthcheck が root ユーザーで接続を試み、
+        # コンテナログに FATAL: role "root" does not exist が並んで紛らわしい
+        # （pg_isready 自体は応答があれば成功するため、CI は通っていた）
+        options: >-
+          --health-cmd "pg_isready -U postgres -d reminder_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/reminder_test
+      # プーラーを挟まない環境なので DATABASE_URL と同じ値でよい
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/reminder_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      # 通知はローカルの受信サーバーへ送るため、LINE / Slack への接続は発生しない
+      - name: Integration check (未返信リマインド)
+        run: npx tsx scripts/e2e-check.ts
+
+      # 追客の自動遷移・優先度・今日やることの仕分けを実DBで検証する
+      - name: Integration check (追客管理)
+        run: npx tsx scripts/followup-check.ts
