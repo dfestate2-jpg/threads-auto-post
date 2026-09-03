@@ -68,7 +68,7 @@ export default async function CustomersPage({
 
   return (
     <AppShell>
-      <AutoRefresh seconds={60} />
+      <AutoRefresh />
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">未返信一覧</h1>
         <span className="text-sm text-slate-500">{total}件</span>

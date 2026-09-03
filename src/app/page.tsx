@@ -32,7 +32,7 @@ export default async function DashboardPage() {
 
   return (
     <AppShell alert={cronAlert}>
-      <AutoRefresh seconds={60} />
+      <AutoRefresh />
       <h1 className="mb-4 text-xl font-bold">ダッシュボード</h1>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
