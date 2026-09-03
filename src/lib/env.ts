@@ -33,6 +33,18 @@ export const env = {
   get lineChannelAccessToken() {
     return required('LINE_CHANNEL_ACCESS_TOKEN')
   },
+  /** 未設定でも例外にしない版。プロフィール取得のように「取れなくても運用が止まらない」用途で使う */
+  get optionalLineChannelAccessToken() {
+    return optional('LINE_CHANNEL_ACCESS_TOKEN')
+  },
+  /**
+   * 顧客対応チャネルのチャネルID。
+   * アクセストークンが手元に無い場合に、チャネルID＋シークレットから
+   * **使い捨ての**トークンを発行するために使う（src/lib/line/statelessToken.ts）。
+   */
+  get optionalLineChannelId() {
+    return optional('LINE_CHANNEL_ID')
+  },
   /** 社内通知Bot。未設定なら顧客対応チャネルのトークンを流用する */
   get lineNotifyAccessToken() {
     return optional('LINE_NOTIFY_CHANNEL_ACCESS_TOKEN') ?? required('LINE_CHANNEL_ACCESS_TOKEN')
