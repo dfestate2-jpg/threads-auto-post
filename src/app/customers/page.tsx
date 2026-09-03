@@ -93,6 +93,7 @@ export default async function CustomersPage({
             customerId: c.customerId,
             name: c.customer.name ?? c.customer.displayName ?? '（名称未取得）',
             lineUserId: c.customer.lineUserId,
+            assigneeId: c.customer.assigneeId,
             assigneeName: c.customer.assignee?.name ?? null,
             lastInboundText: c.lastInboundText,
             lastInboundAt: c.lastInboundAt,
@@ -105,6 +106,7 @@ export default async function CustomersPage({
             version: c.version,
             resolvedAt: c.resolvedAt,
           }))}
+          staff={staff.map((s) => ({ id: s.id, name: s.name }))}
           timezone={settings.timezone}
         />
       </div>

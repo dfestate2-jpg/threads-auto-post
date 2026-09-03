@@ -16,7 +16,7 @@ export default async function DashboardPage() {
   await requirePageSession()
   const settings = await getSettings()
   const now = new Date()
-  const [stats, worst] = await Promise.all([
+  const [stats, worst, staff] = await Promise.all([
     getDashboardStats(settings.timezone, now),
     prisma.conversation.findMany({
       where: { replyState: ReplyState.AWAITING },
@@ -24,6 +24,8 @@ export default async function DashboardPage() {
       orderBy: { firstUnrepliedAt: 'asc' },
       take: 10,
     }),
+    // ワースト10からその場で担当を割り振れるようにするため
+    prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
   ])
 
   const cronAlert = !stats.cron.healthy
@@ -79,8 +81,14 @@ export default async function DashboardPage() {
         />
       </section>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        <section className="lg:col-span-2">
+      {/*
+        ワースト10は幅いっぱいに置く。担当者・状況をその場で変えられるように
+        してから列が増え、3分割の2列分では「状況」が見切れるようになった。
+        一番押したい列が隠れる配置に、横スクロールで対処すべきではない。
+        担当者別の集計は眺めるだけの情報なので、下に回す。
+      */}
+      <div className="mt-6 space-y-6">
+        <section>
           <h2 className="mb-2 text-base font-bold">長時間未返信 ワースト10</h2>
           {worst.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-500">未返信の顧客はいません 🎉</p>
@@ -90,6 +98,7 @@ export default async function DashboardPage() {
                 customerId: c.customerId,
                 name: c.customer.name ?? c.customer.displayName ?? '（名称未取得）',
                 lineUserId: c.customer.lineUserId,
+                assigneeId: c.customer.assigneeId,
                 assigneeName: c.customer.assignee?.name ?? null,
                 lastInboundText: c.lastInboundText,
                 lastInboundAt: c.lastInboundAt,
@@ -99,12 +108,13 @@ export default async function DashboardPage() {
                 version: c.version,
                 resolvedAt: c.resolvedAt,
               }))}
+              staff={staff.map((s) => ({ id: s.id, name: s.name }))}
               timezone={settings.timezone}
             />
           )}
         </section>
 
-        <section className="card p-4">
+        <section className="card max-w-md p-4">
           <h2 className="mb-3 text-sm font-bold">担当者別の未返信件数</h2>
           {stats.byAssignee.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-500">未返信はありません</p>
