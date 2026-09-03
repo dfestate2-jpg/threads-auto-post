@@ -25,6 +25,9 @@ export type QuickActionOutcome =
   /** 通知を送った時点より新しい未返信が発生している */
   | { status: 'STALE_CYCLE'; message: string }
   | { status: 'RESOLVED'; message: string; stillAwaiting: boolean }
+  /** 押した人が担当者として未登録。誰に割り当てればよいか決められない */
+  | { status: 'NOT_STAFF'; message: string }
+  | { status: 'ASSIGNED'; message: string }
 
 /**
  * 社内側からの操作として受け付けてよい発信元かを判定する。
@@ -60,6 +63,42 @@ async function resolveInternalActor(
   return { ok: true, staffId: await staffFor(source.userId) }
 }
 
+/**
+ * 押した本人をその顧客の担当者にする。
+ *
+ * 未返信サイクルの一致は**あえて見ない**。担当者は会話単位ではなく顧客単位の属性で、
+ * 「古い通知から担当を引き受ける」のは正当な操作だから。
+ * 取り違えた場合に備えて、応答には必ず顧客名と担当者名を出す（気づけて直せる形にする）。
+ */
+async function assignToActor(
+  customerId: string,
+  staffId: string | null,
+  customerName: string,
+): Promise<QuickActionOutcome> {
+  if (!staffId) {
+    return {
+      status: 'NOT_STAFF',
+      message:
+        'あなたのLINEアカウントが担当者として登録されていません。管理画面の「設定 → 担当者」で連携コードを発行し、このトークに送って登録してください。',
+    }
+  }
+
+  const staff = await prisma.staff.findUnique({ where: { id: staffId }, select: { name: true } })
+  if (!staff) {
+    return { status: 'NOT_FOUND', message: '担当者の登録が見つかりませんでした。管理画面から確認してください。' }
+  }
+
+  await prisma.customer.update({
+    where: { id: customerId },
+    data: { assigneeId: staffId },
+  })
+
+  return {
+    status: 'ASSIGNED',
+    message: `${customerName} の担当を ${staff.name} さんにしました。次回のリマインドから反映されます。`,
+  }
+}
+
 export async function applyQuickAction(
   input: { data: string | null | undefined; source: LineSource; raw?: unknown },
   ctx: PolicyContext,
@@ -84,6 +123,8 @@ export async function applyQuickAction(
   }
 
   const name = conversation.customer.name ?? conversation.customer.displayName ?? 'この顧客'
+
+  if (action.kind === 'ASSIGN') return assignToActor(action.customerId, actor.staffId, name)
 
   if (conversation.replyState !== ReplyState.AWAITING) {
     return { status: 'ALREADY_RESOLVED', message: `${name} は既に対応済みです。` }

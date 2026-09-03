@@ -33,6 +33,18 @@ export const env = {
   get lineChannelAccessToken() {
     return required('LINE_CHANNEL_ACCESS_TOKEN')
   },
+  /** 未設定でも例外にしない版。プロフィール取得のように「取れなくても運用が止まらない」用途で使う */
+  get optionalLineChannelAccessToken() {
+    return optional('LINE_CHANNEL_ACCESS_TOKEN')
+  },
+  /**
+   * 顧客対応チャネルのチャネルID。
+   * アクセストークンが手元に無い場合に、チャネルID＋シークレットから
+   * **使い捨ての**トークンを発行するために使う（src/lib/line/statelessToken.ts）。
+   */
+  get optionalLineChannelId() {
+    return optional('LINE_CHANNEL_ID')
+  },
   /** 社内通知Bot。未設定なら顧客対応チャネルのトークンを流用する */
   get lineNotifyAccessToken() {
     return optional('LINE_NOTIFY_CHANNEL_ACCESS_TOKEN') ?? required('LINE_CHANNEL_ACCESS_TOKEN')
@@ -70,6 +82,14 @@ export const env = {
   },
   get cronSecret() {
     return required('CRON_SECRET')
+  },
+  /**
+   * 未設定でも例外にしない版。
+   * 定期実行の受け口で使う。未設定というだけで 500 になると
+   * 「設定漏れ」と「認証失敗」が外から区別できず、原因追跡が止まる。
+   */
+  get optionalCronSecret() {
+    return optional('CRON_SECRET')
   },
   get sessionSecret() {
     return required('SESSION_SECRET')

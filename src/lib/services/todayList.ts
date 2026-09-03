@@ -5,11 +5,12 @@
  * 顧客一覧を見せるのが目的ではないので、**今日手を動かす顧客だけ**を返し、
  * それ以外は件数だけにする。
  */
-import type { ActionType, CustomerStatus, FollowUpPriority, Prisma } from '@prisma/client'
+import type { ActionType, CustomerStatus, FollowUpPriority, Prisma, ReplyState } from '@prisma/client'
 
 import { TERMINAL_STATUSES, bucketOf, overdueDays, reasonLabel, type TodayBucket } from '@/lib/domain/followUp'
-import { endOfDayIn, startOfDayIn } from '@/lib/domain/time'
+import { diffMinutes, endOfDayIn, formatElapsedJa, startOfDayIn } from '@/lib/domain/time'
 import { prisma } from '@/lib/prisma'
+import { awaitingReplySinceOf } from './followUp'
 
 export interface TodayRow {
   id: string
@@ -55,6 +56,27 @@ export interface TodayListOptions {
   includeUnassigned?: boolean
 }
 
+/**
+ * 「なぜ今日この顧客に対応するのか」の一言説明。
+ *
+ * 顧客を待たせている場合は、ステータスの経過時間より
+ * **待たせている時間**のほうが営業担当の判断材料になる。
+ * （返信が来た直後はステータス開始も直後になるため、
+ *   そのまま出すと10日待たせていても「0時間」と表示されてしまう）
+ */
+function reasonOf(
+  customer: {
+    status: CustomerStatus
+    statusSince: Date
+    conversation: { replyState: ReplyState; lastInboundAt: Date | null } | null
+  },
+  now: Date,
+): string {
+  const waitingSince = awaitingReplySinceOf(customer.conversation)
+  if (waitingSince) return `未返信 ${formatElapsedJa(diffMinutes(now, waitingSince))}`
+  return reasonLabel(customer.status, customer.statusSince, now)
+}
+
 export async function getTodayList(options: TodayListOptions): Promise<TodayList> {
   const now = options.now ?? new Date()
   const startOfToday = startOfDayIn(options.timezone, now)
@@ -86,7 +108,11 @@ export async function getTodayList(options: TodayListOptions): Promise<TodayList
           { nextActionAt: null, autoFollowEnabled: true },
         ],
       }),
-      include: { assignee: { select: { name: true } } },
+      include: {
+        assignee: { select: { name: true } },
+        // 「顧客を待たせている」状態は、状況説明をそちらに差し替えるため必要
+        conversation: { select: { replyState: true, lastInboundAt: true } },
+      },
       orderBy: [{ nextActionAt: 'asc' }],
       take: MAX_ROWS,
     }),
@@ -119,7 +145,7 @@ export async function getTodayList(options: TodayListOptions): Promise<TodayList
       nextActionType: c.nextActionType,
       nextActionNote: c.nextActionNote,
       assigneeName: c.assignee?.name ?? null,
-      reason: reasonLabel(c.status, c.statusSince, now),
+      reason: reasonOf(c, now),
       overdueDays: overdueDays(c.nextActionAt, startOfToday),
       phone: c.phone,
       hasLine: c.lineUserId !== null && !c.blocked,

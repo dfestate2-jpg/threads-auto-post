@@ -4,9 +4,9 @@ import Link from 'next/link'
 import { AppShell } from '@/components/AppShell'
 import { AutoRefresh } from '@/components/AutoRefresh'
 import { CustomerFilters } from '@/components/CustomerFilters'
-import { ElapsedBadge, StatusBadge, formatDateTimeJa } from '@/components/ui'
+import { CustomerRows } from '@/components/CustomerRows'
 import { requirePageSession } from '@/lib/auth/guard'
-import { diffMinutes } from '@/lib/domain/time'
+import { diffMinutes, formatElapsedJa } from '@/lib/domain/time'
 import { prisma } from '@/lib/prisma'
 import { getSettings } from '@/lib/services/settings'
 
@@ -33,9 +33,14 @@ export default async function UnrepliedCustomersPage({
   const onlyAwaiting = params.awaiting !== '0'
   const q = params.q?.trim()
   const page = Math.max(1, Number(params.page ?? 1) || 1)
+  /** ダッシュボードの「3時間以上未返信」などから直接この一覧へ来るための絞り込み（分） */
+  const overMinutes = Number(params.over) > 0 ? Number(params.over) : null
 
   const where: Prisma.ConversationWhereInput = {
     ...(onlyAwaiting ? { replyState: ReplyState.AWAITING } : {}),
+    ...(overMinutes
+      ? { firstUnrepliedAt: { not: null, lte: new Date(now.getTime() - overMinutes * 60_000) } }
+      : {}),
     ...(status ? { handlingStatus: status } : {}),
     ...(assigneeId ? { customer: { assigneeId: assigneeId === 'none' ? null : assigneeId } } : {}),
     ...(q
@@ -67,7 +72,7 @@ export default async function UnrepliedCustomersPage({
 
   return (
     <AppShell>
-      <AutoRefresh seconds={60} />
+      <AutoRefresh />
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">未返信一覧</h1>
         <span className="text-sm text-slate-500">{total}件</span>
@@ -75,67 +80,39 @@ export default async function UnrepliedCustomersPage({
 
       <CustomerFilters staff={staff.map((s) => ({ id: s.id, name: s.name }))} basePath="/reminders/unreplied" />
 
-      <div className="card mt-4 overflow-x-auto">
-        <table className="w-full min-w-[1100px] text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs text-slate-600">
-              <th className="px-3 py-2">顧客名</th>
-              <th className="px-3 py-2">LINEユーザーID</th>
-              <th className="px-3 py-2">担当者</th>
-              <th className="px-3 py-2">最終顧客メッセージ</th>
-              <th className="px-3 py-2">受信日時</th>
-              <th className="px-3 py-2">未返信経過</th>
-              <th className="px-3 py-2">リマインド</th>
-              <th className="px-3 py-2">対応状況</th>
-              <th className="px-3 py-2">対応済み日時</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={9} className="px-3 py-10 text-center text-slate-500">
-                  該当する顧客はいません
-                </td>
-              </tr>
-            ) : (
-              rows.map((c) => (
-                <tr key={c.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                  <td className="px-3 py-2">
-                    <Link href={`/customers/${c.customerId}`} className="font-medium hover:underline">
-                      {c.customer.name ?? c.customer.displayName ?? '（名称未取得）'}
-                    </Link>
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs text-slate-500">{c.customer.lineUserId}</td>
-                  <td className="px-3 py-2 text-slate-700">
-                    {c.customer.assignee?.name ?? <span className="text-orange-600">未設定</span>}
-                  </td>
-                  <td className="max-w-[280px] truncate px-3 py-2 text-slate-700" title={c.lastInboundText ?? ''}>
-                    {c.lastInboundText ?? '—'}
-                  </td>
-                  <td className="px-3 py-2 text-xs text-slate-500">
-                    {formatDateTimeJa(c.lastInboundAt, settings.timezone)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <ElapsedBadge
-                      minutes={
-                        c.replyState === ReplyState.AWAITING && c.firstUnrepliedAt
-                          ? diffMinutes(now, c.firstUnrepliedAt)
-                          : null
-                      }
-                    />
-                  </td>
-                  <td className="px-3 py-2 tabular-nums text-slate-600">{c.reminderCount}回</td>
-                  <td className="px-3 py-2">
-                    <StatusBadge status={c.handlingStatus} />
-                  </td>
-                  <td className="px-3 py-2 text-xs text-slate-500">
-                    {formatDateTimeJa(c.resolvedAt, settings.timezone)}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      {overMinutes ? (
+        <div className="mt-3 flex items-center gap-2 text-sm">
+          <span className="rounded-full bg-slate-900 px-3 py-1 text-white">
+            {formatElapsedJa(overMinutes)}以上の未返信だけ
+          </span>
+          <Link href="/reminders/unreplied" className="text-slate-600 underline">
+            絞り込みを外す
+          </Link>
+        </div>
+      ) : null}
+
+      <div className="mt-4">
+        <CustomerRows
+          rows={rows.map((c) => ({
+            customerId: c.customerId,
+            name: c.customer.name ?? c.customer.displayName ?? '（名称未取得）',
+            lineUserId: c.customer.lineUserId,
+            assigneeId: c.customer.assigneeId,
+            assigneeName: c.customer.assignee?.name ?? null,
+            lastInboundText: c.lastInboundText,
+            lastInboundAt: c.lastInboundAt,
+            elapsedMinutes:
+              c.replyState === ReplyState.AWAITING && c.firstUnrepliedAt
+                ? diffMinutes(now, c.firstUnrepliedAt)
+                : null,
+            reminderCount: c.reminderCount,
+            handlingStatus: c.handlingStatus,
+            version: c.version,
+            resolvedAt: c.resolvedAt,
+          }))}
+          staff={staff.map((s) => ({ id: s.id, name: s.name }))}
+          timezone={settings.timezone}
+        />
       </div>
 
       {totalPages > 1 ? (

@@ -96,7 +96,13 @@ netlify deploy --prod
 ```
 
 `netlify.toml` と `netlify/functions/reminders-cron.mts` により、
-**5分ごとのスケジュール実行**が自動で設定される。
+**5分ごとのスケジュール実行**が設定される。
+
+> ⚠️ **Netlify のスケジュール実行が起動しない事象を確認している。**
+> 管理画面上は Schedule も Next execution も表示され、「Run now」も成功と出るのに、
+> 関数ログが空のまま、`/settings` の受信状況にも「定期実行」の行が出ない、という状態になる。
+> デプロイ後に受信状況へ「定期実行」の行が出ない場合は、粘らずに
+> [2-C](#2-c-スケジューラだけ外部に置く場合) の外部スケジューラへ切り替えること。
 
 ### 2-B. Vercel
 
@@ -114,21 +120,59 @@ vercel --prod
 
 ### 2-C. スケジューラだけ外部に置く場合
 
-ホスティング側に Cron が無い場合は、`.github/workflows/cron-reminders.yml`（GitHub Actions）または
-[cron-job.org](https://cron-job.org/) 等から下記を叩く。
+**ホスティング側のスケジュール機能が動かない場合は、こちらに切り替える。**
+実際に Netlify Scheduled Functions が「実行成功」と表示されるのに関数が起動しない
+（ログも空、`/settings` の受信状況にも「定期実行」の行が出ない）事象が発生したため、
+本番はこの構成を正とする。
 
-> `cron-reminders.yml` は **既定では自動実行しない**（`workflow_dispatch` のみ）。
-> Netlify / Vercel のスケジューラを使う構成では不要なため、未デプロイ状態で5分ごとに
-> 失敗し続けないようにしてある。使う場合は次の2点を行うこと。
-> 1. リポジトリの `Settings > Secrets and variables > Actions` に `APP_BASE_URL` と `CRON_SECRET` を登録
-> 2. ワークフロー内の `schedule:` のコメントを外す
+`.github/workflows/cron-reminders.yml`（GitHub Actions）または
+[cron-job.org](https://cron-job.org/) 等の無料スケジューラから下記を叩く。
+
+#### 起動URL（ヘッダー不要）
+
+```
+https://<host>/api/cron/reminders?secret=<CRON_SECRET>
+```
+
+- **GET / POST どちらでもよい。** URLを開くだけで起動する。
+- ヘッダーで渡す形（`x-cron-secret` または `Authorization: Bearer`）も引き続き使える。
+  両方ある場合はヘッダーが優先される。
+- **5分間隔**にする。1回や2回起動が失われても、次の起動で期限超過分がまとめて回収される。
+
+> ⚠️ **この URL 自体が認証情報。** リポジトリにコミットしない。共有はパスワード管理ツール経由で行う。
+> ただしこの値で起動できるのは「期限が来たリマインドを送る」処理だけで、
+> データの閲覧も変更もできない。漏れた場合は `CRON_SECRET` を変更してスケジューラ側も更新する。
+
+#### cron-job.org の設定手順
+
+1. アカウントを作る（無料）
+2. **Create cronjob**
+3. **URL** に上記の起動URLを貼る
+4. **Execution schedule** を `Every 5 minutes` にする
+5. **CREATE** を押す
+
+#### GitHub Actions を使う場合
+
+`cron-reminders.yml` は **既定では自動実行しない**（`workflow_dispatch` のみ）。
+使う場合は次の2点を行うこと。
+
+1. リポジトリの `Settings > Secrets and variables > Actions` に `APP_BASE_URL` と `CRON_SECRET` を登録
+2. ワークフロー内の `schedule:` のコメントを外す
 
 ```bash
 curl -X POST https://<host>/api/cron/reminders -H "x-cron-secret: $CRON_SECRET"
 ```
 
 > GitHub Actions のスケジュールは数分〜十数分の遅延が発生することがある。
-> リマインド精度を重視するなら Vercel Cron / Netlify Scheduled Functions を推奨。
+> 遅延が許容できない場合は cron-job.org のような専用サービスを使う。
+
+#### 動いていることの確認
+
+1. `/settings` の **受信状況** に「定期実行」の行が5分おきに増えていく
+2. `/api/health` の `cronHealthy` が `true`、`lastRunAt` が直近の時刻になる
+
+どちらも変わらない場合は、スケジューラ側の実行履歴でHTTPステータスを見る。
+401 なら `CRON_SECRET` の不一致、届いていないならURLの誤り。
 
 ### 2-D. マイグレーションと初期データ
 
@@ -257,7 +301,48 @@ DATABASE_URL=postgresql://... npx tsx scripts/e2e-check.ts
 |------|-------------|
 | 顧客メッセージが取り込まれない | ① LINE Developers の Webhook URL と「Webhookの利用」がオン<br/>② `LINE_CHANNEL_SECRET` がチャネル①のものか<br/>③ サーバーログに `signature verification failed` が出ていないか |
 | リマインドが送られない | ① `/api/health` の `cronHealthy`<br/>② `/settings` の通知チャネル（Slack）でテスト送信<br/>③ 顧客の通知間隔が「通知しない」になっていないか<br/>④ 営業時間外でないか<br/>⑤ 顧客詳細の「リマインド送信履歴」の `status` と `error` |
+| 顧客名が「（名称未取得）」のまま | 顧客のプロフィールは**チャネルごと**に分かれており、社内通知チャネルのトークンでは読めない。顧客対応チャネルの `LINE_CHANNEL_ACCESS_TOKEN` を設定する。取り出せない場合は `LINE_CHANNEL_ID` と `LINE_CHANNEL_SECRET` を設定すれば、使い捨てトークンを都度発行して取得する（下記）。どちらも無理なら顧客詳細の「顧客名」で手動命名（動作には影響しない） |
+| 定期実行が動かない（`/api/health` の `cronHealthy` が false） | 管理画面の **設定 → 受信状況** に「定期実行」の行が出ているか。①行が無い＝起動が届いていない（Netlifyのスケジュール実行を疑う。外部スケジューラへの切替は[2-C](#2-c-スケジューラだけ外部に置く場合)）②「CRON_SECRET が一致しない/未設定」＝環境変数の問題 ③「リマインド処理でエラー」＝`cron_runs.error` を見る |
 | 返信したのに通知が続く | LINE公式Managerから返信した可能性。管理画面から返信するか、「対応済みにする」を押す（[07](./07-line-reply-detection.md)） |
 | 通知が多すぎる | `/settings` の既定間隔を2〜3時間に変更するか、顧客ごとに個別設定する |
 | 「要確認」が増える | 送信失敗が3回続いた／通知先が解決できない／ブロック済み顧客。顧客詳細のリマインド履歴に理由が残っている |
 | 管理画面にログインできない | 5回失敗で15分ロックされる。解除は `users.lockedUntil` を NULL にする |
+| 顧客メッセージが取り込まれない（顧客一覧が0件のまま） | 管理画面の **設定 → 受信状況** を見る。①1件も無い＝Lステップの転送設定が効いていない（外部連携設定のURL保存とオプション有効化を確認）②「拒否」が並ぶ＝URLのtokenかチャネルシークレットの不一致 ③「受理」だが件数0＝転送形式が想定外。表示される構造を見て `extractLineEvents` を拡張する |
+| デプロイが `P1000: Authentication failed` で失敗する | 接続文字列のパスワードが違う。サーバーには到達できているのでホスト・ポートは正しい。パスワードに記号（`@` `#` `%` `/` など）が入っているとURLとして壊れるため、記号なしのパスワードに変えて `DATABASE_URL`（6543）と `DIRECT_URL`（5432）を作り直す |
+| 社内通知の「対応済みにする」ボタンが無反応／連携コードが登録できない | チャネル②のWebhookが401か500を返している。`LINE_NOTIFY_CHANNEL_SECRET` がチャネル②のものか確認する。なお `LINE_CHANNEL_SECRET`（チャネル①）は未設定でもよい設計になっている |
+| デプロイが `publish directory cannot be the same as the base directory` で失敗する | 公開ディレクトリがリポジトリのルートになっている。`netlify.toml` の `publish = ".next"` が効いているか確認する（netlify.toml はUI設定より優先される） |
+
+
+---
+
+## 8. 顧客名の自動取得（アクセストークンが手に入らない場合）
+
+顧客対応チャネルの LINE Developers 権限が社内に無く、アクセストークンを取り出せないことがある。
+その場合は **チャネルID＋チャネルシークレット** を設定すれば、名前の取得だけはできる。
+
+```
+LINE_CHANNEL_ID=<チャネルID>
+LINE_CHANNEL_SECRET=<チャネルシークレット>
+```
+
+どちらも 公式アカウントマネージャー → 設定 → Messaging API で確認できる（LINE Developers は不要）。
+設定して再デプロイすると、**それ以降に届いたメッセージから名前が入る**。
+既に登録済みで名前が空の顧客も、次にメッセージが来た時点で埋まる。
+
+### ⚠️ Lステップを止めないための約束
+
+トークンの発行方式には2種類あり、**間違えるとLステップが止まる。**
+
+| エンドポイント | 有効期間 | 発行数の上限 | 使ってよいか |
+|---|---|---|---|
+| `POST /oauth2/v3/token`（ステートレス） | 15分 | **無制限。既存トークンに影響しない** | ✅ 本システムはこちらのみ使う |
+| `POST /v2/oauth/accessToken` | 30日 | **同時に30個まで。超えると古い順に無効化** | ❌ 使わない |
+
+後者を使うと、発行を重ねるうちに **Lステップが使っているトークンを押し出して無効化し、
+Lステップが停止する。** 顧客名を出したいだけの機能で顧客対応そのものを壊すことになる。
+
+`src/lib/line/statelessToken.ts` はステートレス方式のみを呼ぶ。
+`tests/statelessToken.test.ts` に、誤ったエンドポイントを叩いていないことを固定するテストがある。
+
+> ⚠️ この方式ではチャネルシークレットを本システムでも使う。
+> **シークレットを再発行したときは、Lステップと本システムの両方を更新すること。**

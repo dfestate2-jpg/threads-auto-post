@@ -7,6 +7,7 @@
 import { ResolvedVia } from '@prisma/client'
 
 import { getProfile, replyTextMessage } from '@/lib/line/client'
+import { getStatelessChannelAccessToken } from '@/lib/line/statelessToken'
 import type { LineWebhookEvent } from '@/lib/line/types'
 import { env } from '@/lib/env'
 import { prisma } from '@/lib/prisma'
@@ -33,6 +34,29 @@ function textOf(event: LineWebhookEvent): string | null {
   return `[${m.type}]`
 }
 
+/**
+ * 顧客対応チャネルのアクセストークンを用意する。
+ *
+ * 1. LINE_CHANNEL_ACCESS_TOKEN があればそれを使う
+ * 2. 無ければ チャネルID＋シークレット から**使い捨てのトークン**を発行する
+ *
+ * 2 を用意してあるのは、顧客対応チャネルの LINE Developers 権限が社内に無く、
+ * トークンを取り出せない状況が現実に起きるため。そこで詰まると顧客名が
+ * 永久に「（名称未取得）」のままになる。
+ *
+ * どちらも用意できなければ null。**名前が付かないだけで、検知も通知も止めない。**
+ */
+async function mainChannelAccessToken(): Promise<string | null> {
+  const configured = env.optionalLineChannelAccessToken
+  if (configured) return configured
+
+  const channelId = env.optionalLineChannelId
+  const channelSecret = env.optionalLineChannelSecret
+  if (!channelId || !channelSecret) return null
+
+  return getStatelessChannelAccessToken(channelId, channelSecret)
+}
+
 async function resolveProfile(userId: string): Promise<{ displayName?: string | null; pictureUrl?: string | null } | null> {
   const existing = await prisma.customer.findUnique({
     where: { lineUserId: userId },
@@ -40,7 +64,9 @@ async function resolveProfile(userId: string): Promise<{ displayName?: string | 
   })
   if (existing?.displayName) return null // 既に取得済みなら API を叩かない（レート節約）
   try {
-    const profile = await getProfile(env.lineChannelAccessToken, userId)
+    const accessToken = await mainChannelAccessToken()
+    if (!accessToken) return null
+    const profile = await getProfile(accessToken, userId)
     return profile ? { displayName: profile.displayName, pictureUrl: profile.pictureUrl ?? null } : null
   } catch {
     return null

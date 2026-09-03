@@ -199,10 +199,10 @@ async function main(): Promise<void> {
   check('次回アクションが「返信する」になる', (waiting.nextActionNote ?? '').includes('返信'), waiting.nextActionNote)
   check('優先度が最優先', waiting.priority === 'S')
   const listAfterInbound = await getTodayList({ timezone: TZ, assigneeId: staff.id })
-  check(
-    '今日やることの最優先に出る',
-    listAfterInbound.top.some((r) => r.id === lineCustomer.id) || listAfterInbound.overdue.some((r) => r.id === lineCustomer.id),
-  )
+  const waitingRow = [...listAfterInbound.top, ...listAfterInbound.overdue].find((r) => r.id === lineCustomer.id)
+  check('今日やることの最優先に出る', waitingRow !== undefined)
+  // ステータス開始の経過ではなく、待たせている時間を出す（返信直後は前者が0になるため）
+  check('理由に「未返信」と待たせている時間が出る', (waitingRow?.reason ?? '').startsWith('未返信'), waitingRow?.reason)
 
   // -------------------------------------------------------------------------
   console.log('\n⑧ 成約・失注で追客が止まる')

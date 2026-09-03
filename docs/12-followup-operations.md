@@ -41,10 +41,10 @@ npm run dev     # http://localhost:3000
 ### 動作確認
 
 ```bash
-npm test                    # 判定ロジックのユニットテスト（167ケース）
+npm test                    # 判定ロジックのユニットテスト（230ケース）
 npm run typecheck
 npm run build
-npm run check:followup      # 実DBに対する追客の結合確認（39項目）
+npm run check:followup      # 実DBに対する追客の結合確認（40項目）
 npm run check:reminder      # 実DBに対する未返信リマインドの結合確認
 npm run followups:run       # 追客の定期実行を手元で1回だけ走らせる
 ```

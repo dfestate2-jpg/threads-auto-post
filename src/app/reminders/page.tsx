@@ -3,7 +3,8 @@ import Link from 'next/link'
 
 import { AppShell } from '@/components/AppShell'
 import { AutoRefresh } from '@/components/AutoRefresh'
-import { ElapsedBadge, StatCard, StatusBadge, formatDateTimeJa } from '@/components/ui'
+import { CustomerRows } from '@/components/CustomerRows'
+import { StatCard, formatDateTimeJa } from '@/components/ui'
 import { requirePageSession } from '@/lib/auth/guard'
 import { diffMinutes } from '@/lib/domain/time'
 import { prisma } from '@/lib/prisma'
@@ -20,7 +21,7 @@ export default async function ReminderDashboardPage() {
   await requirePageSession()
   const settings = await getSettings()
   const now = new Date()
-  const [stats, worst] = await Promise.all([
+  const [stats, worst, staff] = await Promise.all([
     getDashboardStats(settings.timezone, now),
     prisma.conversation.findMany({
       where: { replyState: ReplyState.AWAITING },
@@ -28,6 +29,8 @@ export default async function ReminderDashboardPage() {
       orderBy: { firstUnrepliedAt: 'asc' },
       take: 10,
     }),
+    // ワースト10からその場で担当を割り振れるようにするため
+    prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
   ])
 
   const cronAlert = !stats.cron.healthy
@@ -36,7 +39,7 @@ export default async function ReminderDashboardPage() {
 
   return (
     <AppShell alert={cronAlert}>
-      <AutoRefresh seconds={60} />
+      <AutoRefresh />
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">未返信リマインド</h1>
         <Link href="/reminders/unreplied" className="btn-secondary px-3 py-1.5 text-sm">
@@ -45,16 +48,41 @@ export default async function ReminderDashboardPage() {
       </div>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard label="🔴 未返信顧客数" value={stats.awaitingTotal} tone={stats.awaitingTotal > 0 ? 'danger' : 'ok'} />
-        <StatCard label="🟠 1時間以上未返信" value={stats.over1h} tone={stats.over1h > 0 ? 'warn' : 'neutral'} />
-        <StatCard label="🔴 3時間以上未返信" value={stats.over3h} tone={stats.over3h > 0 ? 'danger' : 'neutral'} />
-        <StatCard label="🔴 24時間以上未返信" value={stats.over24h} tone={stats.over24h > 0 ? 'danger' : 'neutral'} />
+        <StatCard
+          label="🔴 未返信顧客数"
+          value={stats.awaitingTotal}
+          tone={stats.awaitingTotal > 0 ? 'danger' : 'ok'}
+          href={stats.awaitingTotal > 0 ? '/reminders/unreplied' : undefined}
+        />
+        <StatCard
+          label="🟠 1時間以上未返信"
+          value={stats.over1h}
+          tone={stats.over1h > 0 ? 'warn' : 'neutral'}
+          href={stats.over1h > 0 ? '/reminders/unreplied?over=60' : undefined}
+        />
+        <StatCard
+          label="🔴 3時間以上未返信"
+          value={stats.over3h}
+          tone={stats.over3h > 0 ? 'danger' : 'neutral'}
+          href={stats.over3h > 0 ? '/reminders/unreplied?over=180' : undefined}
+        />
+        <StatCard
+          label="🔴 24時間以上未返信"
+          value={stats.over24h}
+          tone={stats.over24h > 0 ? 'danger' : 'neutral'}
+          href={stats.over24h > 0 ? '/reminders/unreplied?over=1440' : undefined}
+        />
       </section>
 
       <section className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatCard label="本日のLINE受信数" value={stats.todayInbound} />
         <StatCard label="本日の対応済み数" value={stats.todayResolved} tone="ok" />
-        <StatCard label="要確認" value={stats.needsCheck} tone={stats.needsCheck > 0 ? 'warn' : 'neutral'} />
+        <StatCard
+          label="要確認"
+          value={stats.needsCheck}
+          tone={stats.needsCheck > 0 ? 'warn' : 'neutral'}
+          href={stats.needsCheck > 0 ? '/reminders/unreplied?status=NEEDS_CHECK&awaiting=0' : undefined}
+        />
         <StatCard
           label="通知OFF設定中"
           value={stats.notificationDisabled}
@@ -63,48 +91,40 @@ export default async function ReminderDashboardPage() {
         />
       </section>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        <section className="card p-4 lg:col-span-2">
-          <h2 className="mb-3 text-sm font-bold">長時間未返信 ワースト10</h2>
+      {/*
+        ワースト10は幅いっぱいに置く。担当者・状況をその場で変えられるように
+        してから列が増え、3分割の2列分では「状況」が見切れるようになった。
+        一番押したい列が隠れる配置に、横スクロールで対処すべきではない。
+        担当者別の集計は眺めるだけの情報なので、下に回す。
+      */}
+      <div className="mt-6 space-y-6">
+        <section>
+          <h2 className="mb-2 text-base font-bold">長時間未返信 ワースト10</h2>
           {worst.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-500">未返信の顧客はいません 🎉</p>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
-                  <th className="py-2">顧客名</th>
-                  <th>担当者</th>
-                  <th>未返信経過</th>
-                  <th>リマインド</th>
-                  <th>状況</th>
-                  <th>受信日時</th>
-                </tr>
-              </thead>
-              <tbody>
-                {worst.map((c) => (
-                  <tr key={c.id} className="border-b border-slate-100 last:border-0">
-                    <td className="py-2">
-                      <Link href={`/customers/${c.customerId}`} className="font-medium text-slate-900 hover:underline">
-                        {c.customer.name ?? c.customer.displayName ?? c.customer.lineUserId}
-                      </Link>
-                    </td>
-                    <td className="text-slate-600">{c.customer.assignee?.name ?? '未設定'}</td>
-                    <td>
-                      <ElapsedBadge minutes={c.firstUnrepliedAt ? diffMinutes(now, c.firstUnrepliedAt) : null} />
-                    </td>
-                    <td className="tabular-nums text-slate-600">{c.reminderCount}回</td>
-                    <td>
-                      <StatusBadge status={c.handlingStatus} />
-                    </td>
-                    <td className="text-xs text-slate-500">{formatDateTimeJa(c.lastInboundAt, settings.timezone)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <CustomerRows
+              rows={worst.map((c) => ({
+                customerId: c.customerId,
+                name: c.customer.name ?? c.customer.displayName ?? '（名称未取得）',
+                lineUserId: c.customer.lineUserId,
+                assigneeId: c.customer.assigneeId,
+                assigneeName: c.customer.assignee?.name ?? null,
+                lastInboundText: c.lastInboundText,
+                lastInboundAt: c.lastInboundAt,
+                elapsedMinutes: c.firstUnrepliedAt ? diffMinutes(now, c.firstUnrepliedAt) : null,
+                reminderCount: c.reminderCount,
+                handlingStatus: c.handlingStatus,
+                version: c.version,
+                resolvedAt: c.resolvedAt,
+              }))}
+              staff={staff.map((s) => ({ id: s.id, name: s.name }))}
+              timezone={settings.timezone}
+            />
           )}
         </section>
 
-        <section className="card p-4">
+        <section className="card max-w-md p-4">
           <h2 className="mb-3 text-sm font-bold">担当者別の未返信件数</h2>
           {stats.byAssignee.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-500">未返信はありません</p>
