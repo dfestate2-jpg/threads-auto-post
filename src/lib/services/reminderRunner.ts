@@ -211,6 +211,18 @@ async function processConversation(
     reminderCount: sequence,
     escalationThresholdMinutes: topCrossed?.thresholdMinutes,
     escalationRuleName: topCrossed?.name,
+    /**
+     * 「上にも伝わっている」ことが本人に分かるようにする。
+     * ルール名は利用者が自由に付けられるので、そのまま出さず
+     * 誰に広がったかだけを短く言い換える。
+     */
+    escalationNote: topCrossed
+      ? topCrossed.notifyAdmins
+        ? '管理者にも通知'
+        : topCrossed.notifyManager
+          ? '責任者にも通知'
+          : null
+      : null,
     detailUrl: detailUrl(customer.id),
     includeMessageBody: settings.includeMessageBodyInNotification,
     excerptLength: settings.messageExcerptLength,
@@ -239,7 +251,13 @@ async function processConversation(
       ...(assignData ? [{ label: '🙋 自分が担当にする', data: assignData, displayText: '自分が担当にする' }] : []),
     ]
     if (actions.length > 0) {
-      quick = { prompt: '返信済みの場合はこちらをタップしてください', actions }
+      /**
+       * ボタンは本文とは別の吹き出しで出る。通知が何件も溜まると
+       * ボタンだけ見ても誰のものか分からず、**別の顧客のボタンを押す**事故が起きる。
+       * 宛先の顧客名をボタンの上に必ず出す。
+       */
+      const label = customer.name ?? customer.displayName ?? customer.lineUserId
+      quick = { prompt: `${label} 様への操作`, actions }
     }
   } catch (e) {
     console.warn('[reminder] quick action の生成に失敗（ボタン無しで通知します）', String(e))

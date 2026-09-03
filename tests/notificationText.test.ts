@@ -45,47 +45,71 @@ describe('社内LINEへの通知本文', () => {
     excerptLength: 60,
   }
 
-  it('依頼された書式どおりに組み立てられる', () => {
+  it('1行目・顧客と担当・本文・操作の案内が並ぶ', () => {
     const text = buildNotificationText({ kind: 'ROUTINE', ...base })
-    expect(text).toContain('⚠️ 公式LINE未返信リマインド')
-    expect(text).toContain('顧客名：田中様')
-    expect(text).toContain('未返信時間：2時間')
-    expect(text).toContain('最終メッセージ：')
+    expect(text.split('\n')[0]).toBe('⚠️ 未返信 2時間')
+    expect(text).toContain('田中 様（担当：山田）')
     expect(text).toContain('『〇〇について聞きたいです』')
-    expect(text).toContain('担当者：山田')
-    expect(text).toContain('👉 公式LINEを確認してください。')
+    expect(text).toContain('返信したら下のボタンをタップしてください。')
   })
 
-  it('担当者未設定でも通知先が分かる表記になる', () => {
-    expect(buildNotificationText({ kind: 'ROUTINE', ...base, assigneeName: null })).toContain('担当者：未設定（社内共有）')
+  /** 情報が多いほど読み飛ばされる。行動を変えないものは載せない */
+  it('リマインド回数と最新メッセージ基準の経過は載せない', () => {
+    const text = buildNotificationText({ kind: 'ROUTINE', ...base, unrepliedMinutes: 30, totalUnrepliedMinutes: 180 })
+    expect(text).not.toContain('リマインド回数')
+    expect(text).not.toContain('30分')
   })
 
-  it('連投でカウントが再スタートしている場合は実際の放置時間も併記する', () => {
-    const text = buildNotificationText({ kind: 'GUARD', ...base, unrepliedMinutes: 30, totalUnrepliedMinutes: 180 })
-    expect(text).toContain('未返信時間：30分')
-    expect(text).toContain('（最初の未返信から：3時間）')
+  /**
+   * 連投されている案件ほど急ぐべきなのに、最新メッセージ基準だと数字が小さくなり
+   * 軽く見える。経過時間は「最初の未返信から」の一本に統一する。
+   */
+  it('経過時間は最初の未返信からの時間で出す', () => {
+    const text = buildNotificationText({ kind: 'ROUTINE', ...base, unrepliedMinutes: 5, totalUnrepliedMinutes: 300 })
+    expect(text.split('\n')[0]).toBe('⚠️ 未返信 5時間')
   })
 
-  it('エスカレーション時は種別と段階が分かる', () => {
+  it('担当者未設定でもその旨が分かる', () => {
+    expect(buildNotificationText({ kind: 'ROUTINE', ...base, assigneeName: null })).toContain('田中 様（担当：未設定）')
+  })
+
+  it('エスカレーションでは印が強くなり、誰に広がったかが分かる', () => {
     const text = buildNotificationText({
       kind: 'ESCALATION',
       ...base,
-      escalationThresholdMinutes: 180,
-      escalationRuleName: '3時間：担当者＋責任者へ通知',
+      totalUnrepliedMinutes: 200,
+      escalationNote: '責任者にも通知',
     })
-    expect(text).toContain('🚨 【エスカレーション】公式LINE未返信')
-    expect(text).toContain('エスカレーション：3時間経過（3時間：担当者＋責任者へ通知）')
+    expect(text.split('\n')[0]).toBe('🚨 未返信 3時間20分／責任者にも通知')
+  })
+
+  it('24時間を超えるとさらに強い印になる', () => {
+    const text = buildNotificationText({ kind: 'ROUTINE', ...base, totalUnrepliedMinutes: 1560 })
+    expect(text.split('\n')[0]).toBe('🚨🚨 未返信 1日2時間')
+  })
+
+  it('連投中は本文でもそれが分かる', () => {
+    const text = buildNotificationText({ kind: 'GUARD', ...base, unrepliedMinutes: 30, totalUnrepliedMinutes: 180 })
+    expect(text.split('\n')[0]).toBe('⚠️ 未返信 3時間（メッセージ連投中）')
   })
 
   it('本文を含めない設定ではメッセージが載らない', () => {
     const text = buildNotificationText({ kind: 'ROUTINE', ...base, includeMessageBody: false })
     expect(text).not.toContain('〇〇について聞きたいです')
-    expect(text).toContain('顧客名：田中様')
+    expect(text).toContain('田中 様（担当：山田）')
   })
 
   it('管理画面へのリンクを付けられる', () => {
     const text = buildNotificationText({ kind: 'ROUTINE', ...base, detailUrl: 'https://example.com/customers/abc' })
     expect(text).toContain('https://example.com/customers/abc')
+  })
+
+  /** 宛先は管理者。原因を追える情報を落とさない */
+  it('システム警告は詳しいまま出す', () => {
+    const text = buildNotificationText({ kind: 'WATCHDOG', ...base })
+    expect(text).toContain('🛠 【システム警告】未返信リマインドの配信が遅延しています')
+    expect(text).toContain('リマインド回数：2回目')
+    expect(text).toContain('受信状況')
   })
 })
 

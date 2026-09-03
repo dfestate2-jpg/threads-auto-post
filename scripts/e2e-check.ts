@@ -126,8 +126,10 @@ async function main(): Promise<void> {
 
     s = await runReminderJob(new Date(T0.getTime() + 60 * MIN))
     check('60分時点で1通送られる', s.sent === 1, s)
-    check('通知本文が依頼書式になっている', received[0]?.includes('公式LINE未返信リマインド') === true)
-    check('未返信時間が表示される', received[0]?.includes('未返信時間：1時間') === true, received[0])
+    check('通知本文が経過時間から始まる', received[0]?.includes('⚠️ 未返信 1時間') === true, received[0])
+    check('通知本文に顧客と担当者が並ぶ', received[0]?.includes('（担当：') === true)
+    check('通知本文に操作の案内がある', received[0]?.includes('返信したら下のボタンをタップしてください。') === true)
+    check('顧客名と本文が載る', received[0]?.includes('『〇〇について聞きたいです』') === true, received[0])
 
     s = await runReminderJob(new Date(T0.getTime() + 120 * MIN))
     check('120分時点で2通目が送られる', s.sent === 1 && received.length === 2, { s, count: received.length })
@@ -200,9 +202,10 @@ async function main(): Promise<void> {
     check('連投中でも通知が出る', guardSent > 0, { guardSent })
     const guardReminder = await prisma.reminder.findFirst({ where: { kind: 'GUARD' } })
     check('保険（GUARD）として記録される', guardReminder !== null)
+    // 連投中は最新メッセージ基準だと数字が小さくなり軽く見える。実際の放置時間を出す
     check(
-      '最初の未返信からの実経過が併記される',
-      received.some((r) => r.includes('最初の未返信から')),
+      '連投中でも実際の放置時間が出る',
+      received.some((r) => r.includes('未返信 3時間（メッセージ連投中）')),
       received[0],
     )
 
