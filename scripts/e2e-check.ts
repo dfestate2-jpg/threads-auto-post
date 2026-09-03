@@ -18,7 +18,7 @@ import { loadPolicyContext } from '../src/lib/services/context'
 import { recordInboundMessage, recordOutboundMessage } from '../src/lib/services/conversation'
 import { runReminderJob } from '../src/lib/services/reminderRunner'
 import { applyQuickAction } from '../src/lib/services/quickAction'
-import { buildResolveActionData } from '../src/lib/line/quickAction'
+import { buildAssignActionData, buildResolveActionData } from '../src/lib/line/quickAction'
 
 // このスクリプトは DATABASE_URL だけで動くようにする。
 // ボタンの署名鍵は本番と同じ経路（env.quickActionSecret）で参照されるため、未設定なら検証用の値を入れる。
@@ -517,6 +517,76 @@ async function main(): Promise<void> {
     check(
       '対応済み後はリマインドが止まる',
       (await prisma.conversation.findUniqueOrThrow({ where: { id: shared.conversationId } })).nextReminderAt === null,
+    )
+
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑮ 社内LINE通知の「自分が担当にする」ボタン')
+    await reset()
+    await prisma.appSettings.update({ where: { id: 1 }, data: { respectBusinessHours: false } })
+    await prisma.notificationChannel.create({
+      data: { name: '社内LINEグループ', type: ChannelType.LINE_GROUP, target: 'Ginternal', purpose: ChannelPurpose.DEFAULT_GROUP },
+    })
+    const assigner = await prisma.staff.create({
+      data: { name: '割当担当', email: 'assign@example.test', lineUserId: 'Ustaff-assign' },
+    })
+    const qsecret = process.env.QUICK_ACTION_SECRET ?? process.env.SESSION_SECRET!
+
+    await inbound('Ucustomer13', '担当割当の確認です', T0, 'msg-13a')
+    const conv13 = await prisma.conversation.findFirstOrThrow({ where: { customer: { lineUserId: 'Ucustomer13' } } })
+    const assignData = buildAssignActionData(
+      { customerId: conv13.customerId, cycleId: conv13.firstUnrepliedAt!.getTime() },
+      qsecret,
+    )!
+
+    check(
+      '割当前は担当者が未設定',
+      (await prisma.customer.findUniqueOrThrow({ where: { id: conv13.customerId } })).assigneeId === null,
+    )
+
+    // 社内グループから、担当者として登録済みの人がタップする
+    const assigned = await applyQuickAction(
+      { data: assignData, source: { type: 'group', groupId: 'Ginternal', userId: 'Ustaff-assign' } },
+      await loadPolicyContext(T0),
+    )
+    check('グループからのタップで担当者になる', assigned.status === 'ASSIGNED', assigned)
+    check(
+      '顧客の担当者が更新される',
+      (await prisma.customer.findUniqueOrThrow({ where: { id: conv13.customerId } })).assigneeId === assigner.id,
+    )
+
+    // 担当を引き受けただけで、未返信を閉じてはいけない（見逃しに直結する）
+    const conv13b = await prisma.conversation.findUniqueOrThrow({ where: { id: conv13.id } })
+    check('担当割当では未返信のままになる', conv13b.replyState === ReplyState.AWAITING, conv13b.replyState)
+    check('リマインド予定も消えない', conv13b.nextReminderAt !== null, conv13b.nextReminderAt)
+
+    // 未登録アカウントが押しても、誰に割り当てるか決められない
+    const notStaff = await applyQuickAction(
+      { data: assignData, source: { type: 'group', groupId: 'Ginternal', userId: 'Uunknown-person' } },
+      await loadPolicyContext(T0),
+    )
+    check('未登録アカウントのタップは担当者にできない', notStaff.status === 'NOT_STAFF', notStaff.status)
+    check(
+      '担当者は元のまま変わらない',
+      (await prisma.customer.findUniqueOrThrow({ where: { id: conv13.customerId } })).assigneeId === assigner.id,
+    )
+
+    // 社外からのタップは、そもそも受け付けない
+    const outsiderAssign = await applyQuickAction(
+      { data: assignData, source: { type: 'user', userId: 'Uoutsider-assign' } },
+      await loadPolicyContext(T0),
+    )
+    check('社外アカウントの担当割当は拒否される', outsiderAssign.status === 'FORBIDDEN', outsiderAssign.status)
+
+    // 署名の対象に種別が入っているので、担当割当を「対応済み」に化けさせられない
+    const forgedKind = await applyQuickAction(
+      { data: assignData.replace('.A.', '.R.'), source: { type: 'group', groupId: 'Ginternal', userId: 'Ustaff-assign' } },
+      await loadPolicyContext(T0),
+    )
+    check('種別を差し替えたデータは無視される', forgedKind.status === 'INVALID', forgedKind.status)
+    check(
+      '差し替えられても未返信のまま',
+      (await prisma.conversation.findUniqueOrThrow({ where: { id: conv13.id } })).replyState === ReplyState.AWAITING,
     )
 
   } finally {

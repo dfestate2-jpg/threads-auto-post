@@ -21,7 +21,7 @@ import { addBusinessMinutes } from '@/lib/domain/businessHours'
 import { addMinutes, diffMinutes } from '@/lib/domain/time'
 import { env } from '@/lib/env'
 import { dispatchFallback, dispatchNotification, type QuickActionOptions } from '@/lib/notify/dispatcher'
-import { buildResolveActionData } from '@/lib/line/quickAction'
+import { buildAssignActionData, buildResolveActionData } from '@/lib/line/quickAction'
 import { prisma } from '@/lib/prisma'
 import { loadPolicyContext } from './context'
 import { loadNotifyDirectory, type NotifyDirectory } from './notifyTargets'
@@ -217,23 +217,29 @@ async function processConversation(
   })
 
   /**
-   * 社内LINE通知に付ける「対応済みにする」ボタン。
-   * 公式LINEのチャット画面から返信しても Webhook には届かない（LINE仕様）ため、
-   * 営業担当の工数を「タップ1回」にするための経路。
-   * cycleStart を署名付きで埋めているので、**古い通知のボタンでは今の未返信を閉じられない**。
+   * 社内LINE通知に付けるワンタップ操作。
+   *
+   * 「対応済みにする」— 公式LINEのチャット画面から返信しても Webhook には届かない（LINE仕様）ため、
+   * 営業担当の工数を「タップ1回」にするための経路。cycleStart を署名付きで埋めているので、
+   * **古い通知のボタンでは今の未返信を閉じられない**。
+   *
+   * 「自分が担当にする」— 担当者の割り当ては管理画面を開かないとできず、
+   * それだと通知を見た流れで決められない。ボタンは同じ push にまとめて載るので
+   * **消費通数は増えない**。
+   *
    * 署名鍵の未設定などで作れなかった場合はボタン無しで通知する（通知は絶対に止めない）。
    */
   let quick: QuickActionOptions | undefined
   try {
-    const data = buildResolveActionData(
-      { customerId: customer.id, cycleId: cycleStart.getTime() },
-      env.quickActionSecret,
-    )
-    if (data) {
-      quick = {
-        prompt: '返信済みの場合はこちらをタップしてください',
-        actions: [{ label: '✅ 対応済みにする', data, displayText: '対応済みにする' }],
-      }
+    const target = { customerId: customer.id, cycleId: cycleStart.getTime() }
+    const resolveData = buildResolveActionData(target, env.quickActionSecret)
+    const assignData = buildAssignActionData(target, env.quickActionSecret)
+    const actions = [
+      ...(resolveData ? [{ label: '✅ 対応済みにする', data: resolveData, displayText: '対応済みにする' }] : []),
+      ...(assignData ? [{ label: '🙋 自分が担当にする', data: assignData, displayText: '自分が担当にする' }] : []),
+    ]
+    if (actions.length > 0) {
+      quick = { prompt: '返信済みの場合はこちらをタップしてください', actions }
     }
   } catch (e) {
     console.warn('[reminder] quick action の生成に失敗（ボタン無しで通知します）', String(e))
