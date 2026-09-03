@@ -96,6 +96,7 @@ export default async function DashboardPage() {
                 elapsedMinutes: c.firstUnrepliedAt ? diffMinutes(now, c.firstUnrepliedAt) : null,
                 reminderCount: c.reminderCount,
                 handlingStatus: c.handlingStatus,
+                version: c.version,
                 resolvedAt: c.resolvedAt,
               }))}
               timezone={settings.timezone}

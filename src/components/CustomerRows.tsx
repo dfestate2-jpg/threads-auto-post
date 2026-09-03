@@ -1,7 +1,8 @@
 import { HandlingStatus } from '@prisma/client'
 import Link from 'next/link'
 
-import { ElapsedBadge, StatusBadge, formatDateTimeJa } from './ui'
+import { StatusSelect } from './StatusSelect'
+import { ElapsedBadge, formatDateTimeJa } from './ui'
 
 export interface CustomerRow {
   customerId: string
@@ -15,6 +16,8 @@ export interface CustomerRow {
   reminderCount: number
   handlingStatus: HandlingStatus
   resolvedAt: Date | null
+  /** 楽観ロック用。同時操作の上書きを防ぐ */
+  version: number
 }
 
 /**
@@ -37,18 +40,14 @@ export function CustomerRows({ rows, timezone }: { rows: CustomerRow[]; timezone
       {/* --- スマホ --- */}
       <ul className="space-y-2 md:hidden">
         {rows.map((r) => (
-          <li key={r.customerId}>
-            <Link
-              href={`/customers/${r.customerId}`}
-              className="card block p-4 active:bg-slate-50"
-            >
+          <li key={r.customerId} className="card p-4">
+            <Link href={`/customers/${r.customerId}`} className="block active:opacity-70">
               <div className="flex items-start justify-between gap-3">
                 <span className="text-base font-bold leading-tight">{r.name}</span>
                 <ElapsedBadge minutes={r.elapsedMinutes} size="lg" />
               </div>
               <p className="mt-2 line-clamp-2 text-sm text-slate-600">{r.lastInboundText ?? '—'}</p>
-              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                <StatusBadge status={r.handlingStatus} />
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                 <span>
                   担当 {r.assigneeName ?? <span className="font-medium text-orange-600">未設定</span>}
                 </span>
@@ -56,6 +55,14 @@ export function CustomerRows({ rows, timezone }: { rows: CustomerRow[]; timezone
                 <span>{formatDateTimeJa(r.lastInboundAt, timezone)}</span>
               </div>
             </Link>
+            <div className="mt-3 border-t border-slate-100 pt-3">
+              <StatusSelect
+                customerId={r.customerId}
+                customerName={r.name}
+                value={r.handlingStatus}
+                version={r.version}
+              />
+            </div>
           </li>
         ))}
       </ul>
@@ -101,13 +108,18 @@ export function CustomerRows({ rows, timezone }: { rows: CustomerRow[]; timezone
                     {r.assigneeName ?? <span className="font-medium text-orange-600">未設定</span>}
                   </Link>
                 </td>
-                <td className="p-0">
-                  <Link href={`/customers/${r.customerId}`} className="block px-4 py-3">
-                    <StatusBadge status={r.handlingStatus} />
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <StatusSelect
+                      customerId={r.customerId}
+                      customerName={r.name}
+                      value={r.handlingStatus}
+                      version={r.version}
+                    />
                     {r.reminderCount > 0 ? (
-                      <span className="ml-2 text-xs text-slate-500">{r.reminderCount}回</span>
+                      <span className="whitespace-nowrap text-xs text-slate-500">{r.reminderCount}回</span>
                     ) : null}
-                  </Link>
+                  </div>
                 </td>
                 <td className="p-0 text-right">
                   <Link href={`/customers/${r.customerId}`} className="block px-4 py-3 text-xs text-slate-500">

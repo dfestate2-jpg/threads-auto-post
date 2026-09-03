@@ -102,6 +102,7 @@ export default async function CustomersPage({
                 : null,
             reminderCount: c.reminderCount,
             handlingStatus: c.handlingStatus,
+            version: c.version,
             resolvedAt: c.resolvedAt,
           }))}
           timezone={settings.timezone}
