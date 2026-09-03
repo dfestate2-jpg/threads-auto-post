@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildDigestText, buildExcerpt, buildNotificationText } from '@/lib/domain/notificationText'
+import {
+  DEFAULT_NOTIFICATION_TEMPLATE,
+  buildDigestText,
+  buildExcerpt,
+  buildNotificationText,
+  renderNotificationTemplate,
+} from '@/lib/domain/notificationText'
 import { formatElapsedJa } from '@/lib/domain/time'
 import { escalationDedupeKey, guardDedupeKey, routineDedupeKey, watchdogDedupeKey } from '@/lib/domain/dedupe'
 import { buildWebhookPayload, detectWebhookFlavor } from '@/lib/notify/webhookPayload'
@@ -99,9 +105,10 @@ describe('社内LINEへの通知本文', () => {
     expect(text).toContain('田中 様（担当：山田）')
   })
 
-  it('管理画面へのリンクを付けられる', () => {
+  /** 既定ではURLを載せない。文面テンプレートの節で {URL} を入れた場合を確認している */
+  it('既定の文面に管理画面のURLは入らない', () => {
     const text = buildNotificationText({ kind: 'ROUTINE', ...base, detailUrl: 'https://example.com/customers/abc' })
-    expect(text).toContain('https://example.com/customers/abc')
+    expect(text).not.toContain('https://example.com/customers/abc')
   })
 
   /** 宛先は管理者。原因を追える情報を落とさない */
@@ -110,6 +117,63 @@ describe('社内LINEへの通知本文', () => {
     expect(text).toContain('🛠 【システム警告】未返信リマインドの配信が遅延しています')
     expect(text).toContain('リマインド回数：2回目')
     expect(text).toContain('受信状況')
+  })
+})
+
+describe('文面テンプレート', () => {
+  const base = {
+    customerName: '田中',
+    unrepliedMinutes: 120,
+    totalUnrepliedMinutes: 120,
+    lastMessage: '〇〇について聞きたいです',
+    assigneeName: '山田',
+    reminderCount: 2,
+    includeMessageBody: true,
+    excerptLength: 60,
+    detailUrl: 'https://example.com/customers/abc',
+  }
+
+  it('既定の文面には管理画面のURLを入れない', () => {
+    expect(DEFAULT_NOTIFICATION_TEMPLATE).not.toContain('{URL}')
+    expect(buildNotificationText({ kind: 'ROUTINE', ...base })).not.toContain('https://example.com')
+  })
+
+  it('テンプレートを差し替えられる', () => {
+    const text = buildNotificationText({
+      kind: 'ROUTINE',
+      ...base,
+      template: '{顧客名}さん / {経過時間} / {担当者}',
+    })
+    expect(text).toBe('田中さん / 2時間 / 山田')
+  })
+
+  it('{URL} を入れれば管理画面のリンクが載る', () => {
+    const text = buildNotificationText({ kind: 'ROUTINE', ...base, template: '{顧客名}\n{URL}' })
+    expect(text).toContain('https://example.com/customers/abc')
+  })
+
+  /** 空のまま保存されても通知が空にならないようにする */
+  it('テンプレートが空なら既定の文面を使う', () => {
+    for (const template of [null, undefined, '', '   ']) {
+      const text = buildNotificationText({ kind: 'ROUTINE', ...base, template })
+      expect(text).toContain('田中 様（担当：山田）')
+    }
+  })
+
+  /** 黙って消すと書き間違いに気づけない */
+  it('知らない差し込みはそのまま残す', () => {
+    expect(renderNotificationTemplate('{顧客名} {存在しない}', { '{顧客名}': '田中' })).toBe('田中 {存在しない}')
+  })
+
+  it('中身が空になった行は落とす', () => {
+    const text = buildNotificationText({ kind: 'ROUTINE', ...base, includeMessageBody: false })
+    expect(text).not.toContain('『』')
+    expect(text).toContain('田中 様（担当：山田）')
+  })
+
+  it('URLを外しても空行が増えない', () => {
+    const text = buildNotificationText({ kind: 'ROUTINE', ...base, template: '{顧客名}\n{URL}\n終わり', detailUrl: null })
+    expect(text).toBe('田中\n終わり')
   })
 })
 
@@ -139,10 +203,6 @@ describe('まとめ通知（2回目以降）', () => {
     expect(text).toContain('🚨🚨 山田太郎')
     expect(text).toContain('🚨 佐藤花子')
     expect(text).toContain('⚠️ 鈴木一郎')
-  })
-
-  it('一覧のURLを付けられる', () => {
-    expect(buildDigestText(entries, 'https://example.com/customers')).toContain('https://example.com/customers')
   })
 
   it('操作は一覧からと案内する', () => {

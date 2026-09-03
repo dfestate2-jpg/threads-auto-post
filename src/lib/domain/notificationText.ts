@@ -17,6 +17,8 @@ export interface NotificationContext {
   escalationRuleName?: string
   /** 「責任者にも通知」など、誰に広がったかの短い説明 */
   escalationNote?: string | null
+  /** 設定画面で編集できる本文テンプレート。空なら既定を使う */
+  template?: string | null
   /** 管理画面の該当顧客ページURL */
   detailUrl?: string | null
   includeMessageBody: boolean
@@ -33,49 +35,96 @@ export function buildExcerpt(text: string | null, maxLength: number): string {
 }
 
 /**
+ * リマインド本文の既定テンプレート。
+ *
+ * 読むのはスマホのLINEで、しかも営業中の担当者。情報を並べるほど読み飛ばされるので、
+ * 次の行動を変えないものは載せない。載せるのは
+ * 「誰が・どれだけ待っているか・何の話か・自分の担当か」の4つだけ。
+ *
+ * 管理画面のURLは既定では入れない。毎回URLが並ぶとトークが読みにくくなるうえ、
+ * グループのノートに貼っておけば十分なため。必要なら {URL} を足せば戻せる。
+ */
+export const DEFAULT_NOTIFICATION_TEMPLATE = `{印} 未返信 {経過時間}{補足}
+{顧客名} 様（担当：{担当者}）
+『{メッセージ}』
+
+返信したら下のボタンをタップしてください。`
+
+/** テンプレートで使える差し込み。設定画面の説明と一致させること */
+export const TEMPLATE_PLACEHOLDERS = [
+  { key: '{印}', description: '⚠️ / 🚨 / 🚨🚨（放置が長いほど強くなる）' },
+  { key: '{経過時間}', description: '最初の未返信からの経過。例：1時間20分' },
+  { key: '{補足}', description: '「／責任者にも通知」「（メッセージ連投中）」など。無ければ空' },
+  { key: '{顧客名}', description: '顧客名。未取得なら（名称未取得）' },
+  { key: '{担当者}', description: '担当者名。未設定なら「未設定」' },
+  { key: '{メッセージ}', description: '顧客の最終メッセージの抜粋' },
+  { key: '{URL}', description: '管理画面の顧客ページURL' },
+] as const
+
+/**
+ * テンプレートに値を差し込む。
+ *
+ * **差し込んだ結果が空になった行は落とす。** 「メッセージを載せない」設定のときに
+ * 『』だけの行が残ったり、URLを外したのに空行が増えたりするのを防ぐ。
+ * 未知の差し込みはそのまま残す。黙って消すと、書き間違いに気づけない。
+ */
+export function renderNotificationTemplate(template: string, values: Record<string, string>): string {
+  const PLACEHOLDER = /\{[^}\n]{1,20}\}/
+  const substitute = (line: string): string =>
+    line.replace(new RegExp(PLACEHOLDER, 'g'), (m) => (m in values ? values[m]! : m))
+
+  return template
+    .split('\n')
+    .filter((rawLine) => {
+      // 元から固定文・空行の行はそのまま残す（意図した空行を消さない）
+      if (!PLACEHOLDER.test(rawLine)) return true
+      // 差し込んだ結果、記号しか残らなかった行は中身が無かったということ
+      return substitute(rawLine).replace(/[『』（）「」：:\s]/g, '').length > 0
+    })
+    .map(substitute)
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/**
  * 社内LINEへ送る通知本文を組み立てる。
  *
- * 読むのはスマホのLINEで、しかも**営業中の担当者**。
- * 情報を並べるほど読み飛ばされるので、次の行動を変えないものは載せない。
- * 載せるのは「誰が・どれだけ待っているか・何の話か・自分の担当か」の4つだけ。
- *
- * 落とした情報（リマインド回数、最新メッセージ基準の経過時間）は
- * 管理画面で見られる。通知は判断のきっかけであって、記録ではない。
+ * 文面は設定画面から変えられる。壊れたテンプレートでも通知は止めない
+ * （空なら既定に戻す）。通知が出ないことのほうが、文面が崩れることより重大。
  *
  * システム警告（WATCHDOG）だけは管理者向けなので、これまで通り詳しく出す。
  */
 export function buildNotificationText(ctx: NotificationContext): string {
   if (ctx.kind === 'WATCHDOG') return buildWatchdogText(ctx)
 
-  const lines: string[] = []
-  lines.push(headline(ctx))
-  lines.push(`${ctx.customerName} 様（担当：${ctx.assigneeName ?? '未設定'}）`)
-  if (ctx.includeMessageBody) {
-    lines.push(`『${buildExcerpt(ctx.lastMessage, ctx.excerptLength)}』`)
-  }
-  // 管理画面を開くのは管理者と事務。営業担当は使わないので最後に置く
-  if (ctx.detailUrl) lines.push(ctx.detailUrl)
-  lines.push('')
-  lines.push('返信したら下のボタンをタップしてください。')
-
-  return lines.join('\n')
+  const template = ctx.template?.trim() ? ctx.template : DEFAULT_NOTIFICATION_TEMPLATE
+  return renderNotificationTemplate(template, {
+    '{印}': severityMark(ctx),
+    '{経過時間}': formatElapsedJa(ctx.totalUnrepliedMinutes),
+    '{補足}': supplement(ctx),
+    '{顧客名}': ctx.customerName,
+    '{担当者}': ctx.assigneeName ?? '未設定',
+    '{メッセージ}': ctx.includeMessageBody ? buildExcerpt(ctx.lastMessage, ctx.excerptLength) : '',
+    '{URL}': ctx.detailUrl ?? '',
+  })
 }
 
 /**
- * 1行目。放置が長引くほど強くする。
+ * 放置が長いほど強くする。
  *
- * 経過時間は **最初の未返信から** の一本に統一した。
+ * 経過時間は **最初の未返信から** の一本にしている。
  * 顧客が追加メッセージを送るたびに短い数字が出ると、
  * 連投されている案件ほど軽く見えて後回しになる。実際は逆に急ぐべきもの。
  */
-function headline(ctx: NotificationContext): string {
-  const elapsed = formatElapsedJa(ctx.totalUnrepliedMinutes)
+function severityMark(ctx: NotificationContext): string {
+  if (ctx.totalUnrepliedMinutes >= 1440) return '🚨🚨'
+  return ctx.kind === 'ESCALATION' ? '🚨' : '⚠️'
+}
 
-  if (ctx.kind === 'GUARD') return `⚠️ 未返信 ${elapsed}（メッセージ連投中）`
-
-  const mark = ctx.totalUnrepliedMinutes >= 1440 ? '🚨🚨' : ctx.kind === 'ESCALATION' ? '🚨' : '⚠️'
-  const note = ctx.escalationNote ? `／${ctx.escalationNote}` : ''
-  return `${mark} 未返信 ${elapsed}${note}`
+function supplement(ctx: NotificationContext): string {
+  if (ctx.kind === 'GUARD') return '（メッセージ連投中）'
+  return ctx.escalationNote ? `／${ctx.escalationNote}` : ''
 }
 
 /** 配信遅延の警告。宛先は管理者なので、原因を追える情報を残す */
@@ -123,7 +172,7 @@ export interface DigestEntry {
  *
  * 放置が長い順に並べる。上から読めば手を付ける順になる。
  */
-export function buildDigestText(entries: DigestEntry[], listUrl?: string | null): string {
+export function buildDigestText(entries: DigestEntry[]): string {
   const sorted = [...entries].sort((a, b) => b.totalUnrepliedMinutes - a.totalUnrepliedMinutes)
   const lines: string[] = [`⚠️ 未返信 ${sorted.length}件（継続中）`, '']
 
@@ -136,6 +185,5 @@ export function buildDigestText(entries: DigestEntry[], listUrl?: string | null)
 
   lines.push('')
   lines.push('対応済みにするには一覧から開いてください。')
-  if (listUrl) lines.push(listUrl)
   return lines.join('\n')
 }

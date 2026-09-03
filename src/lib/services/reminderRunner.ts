@@ -240,6 +240,7 @@ async function processConversation(
      * ルール名は利用者が自由に付けられるので、そのまま出さず
      * 誰に広がったかだけを短く言い換える。
      */
+    template: settings.notificationTemplate,
     escalationNote: topCrossed
       ? topCrossed.notifyAdmins
         ? '管理者にも通知'
@@ -568,8 +569,6 @@ async function runWatchdog(ctx: PolicyContext, directory: NotifyDirectory, now: 
  * = まとめたことで通知が消える、という事故を作らない。
  */
 async function flushDigest(deliveries: PendingDelivery[]): Promise<{ sent: number; failed: number }> {
-  const listUrl = env.appBaseUrl ? `${env.appBaseUrl.replace(/\/$/, '')}/customers` : null
-
   const byTarget = new Map<string, { target: NotifyTarget; items: PendingDelivery[] }>()
   for (const d of deliveries) {
     for (const t of d.targets) {
@@ -589,10 +588,7 @@ async function flushDigest(deliveries: PendingDelivery[]): Promise<{ sent: numbe
   }
 
   for (const { target, items } of byTarget.values()) {
-    const text = buildDigestText(
-      items.map((d) => d.digestEntry),
-      listUrl,
-    )
+    const text = buildDigestText(items.map((d) => d.digestEntry))
     const { results } = await dispatchNotification([target], text)
     const r = results[0]
     for (const d of items) {

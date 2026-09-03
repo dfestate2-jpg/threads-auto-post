@@ -353,6 +353,10 @@ model AppSettings {
   /// 初回とエスカレーションは、ボタン付きの個別通知のまま。
   digestRepeatReminders Boolean @default(true)
 
+  /// リマインド本文のテンプレート。空なら既定の文面を使う。
+  /// {顧客名} {担当者} {経過時間} などを差し込める。
+  notificationTemplate String?
+
   /// 通知本文に顧客メッセージを含めるか
   includeMessageBodyInNotification Boolean @default(true)
   /// 通知本文に載せるメッセージの最大文字数

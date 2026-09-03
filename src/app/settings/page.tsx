@@ -38,6 +38,7 @@ export default async function SettingsPage() {
     watchdogDelayMinutes: settings.watchdogDelayMinutes,
     alwaysNotifyDefaultGroup: settings.alwaysNotifyDefaultGroup,
     digestRepeatReminders: settings.digestRepeatReminders,
+    notificationTemplate: settings.notificationTemplate,
     includeMessageBodyInNotification: settings.includeMessageBodyInNotification,
     messageExcerptLength: settings.messageExcerptLength,
   }
