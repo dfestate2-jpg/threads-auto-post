@@ -1,4 +1,5 @@
 import { HandlingStatus, type ActionType, type CustomerStatus, type FollowUpPriority } from '@prisma/client'
+import Link from 'next/link'
 
 import { ACTION_TYPE_LABEL, CUSTOMER_STATUS_LABEL, PRIORITY_LABEL } from '@/lib/domain/followUp'
 import { formatElapsedJa } from '@/lib/domain/time'
@@ -26,7 +27,7 @@ export function StatusBadge({ status }: { status: HandlingStatus }) {
 }
 
 /** 未返信経過時間。長時間ほど強い色にして見落としを防ぐ */
-export function ElapsedBadge({ minutes }: { minutes: number | null }) {
+export function ElapsedBadge({ minutes, size = 'md' }: { minutes: number | null; size?: 'md' | 'lg' }) {
   if (minutes === null) return <span className="text-slate-400">—</span>
   const cls =
     minutes >= 1440
@@ -36,7 +37,13 @@ export function ElapsedBadge({ minutes }: { minutes: number | null }) {
         : minutes >= 60
           ? 'bg-orange-100 text-orange-800'
           : 'bg-slate-100 text-slate-700'
-  return <span className={`inline-block rounded px-2 py-0.5 text-xs font-semibold tabular-nums ${cls}`}>{formatElapsedJa(minutes)}</span>
+  // 一覧で最初に目に入るべき情報なので、狭い画面では大きめに出す
+  const sizeCls = size === 'lg' ? 'px-2.5 py-1 text-sm' : 'px-2 py-0.5 text-xs'
+  return (
+    <span className={`inline-block whitespace-nowrap rounded font-semibold tabular-nums ${sizeCls} ${cls}`}>
+      {formatElapsedJa(minutes)}
+    </span>
+  )
 }
 
 export function StatCard({
@@ -44,11 +51,14 @@ export function StatCard({
   value,
   tone = 'neutral',
   hint,
+  href,
 }: {
   label: string
   value: number | string
   tone?: 'neutral' | 'warn' | 'danger' | 'ok'
   hint?: string
+  /** 指定するとカード全体が該当一覧へのリンクになる */
+  href?: string
 }) {
   const tones = {
     neutral: 'border-slate-200',
@@ -56,13 +66,26 @@ export function StatCard({
     danger: 'border-red-300 bg-red-50',
     ok: 'border-green-300 bg-green-50',
   } as const
-  return (
-    <div className={`card border p-4 ${tones[tone]}`}>
-      <div className="text-xs font-medium text-slate-600">{label}</div>
+  const body = (
+    <>
+      <div className="text-xs font-medium text-slate-600 sm:text-sm">{label}</div>
       <div className="mt-1 text-3xl font-bold tabular-nums text-slate-900">{value}</div>
       {hint ? <div className="mt-1 text-xs text-slate-500">{hint}</div> : null}
-    </div>
+    </>
   )
+  /**
+   * 数字を見て「で、どれ？」となるのを避けるため、
+   * 該当する一覧へそのまま飛べるようにする。カード全体が対象なので指でも押しやすい。
+   */
+  if (href) {
+    return (
+      <Link href={href} className={`card block border p-4 transition hover:border-slate-400 active:bg-slate-50 ${tones[tone]}`}>
+        {body}
+        <span className="mt-2 block text-xs font-medium text-slate-500">一覧を見る →</span>
+      </Link>
+    )
+  }
+  return <div className={`card border p-4 ${tones[tone]}`}>{body}</div>
 }
 
 export function formatDateTimeJa(date: Date | null | undefined, timezone: string): string {

@@ -24,3 +24,23 @@ export function safeEqual(a: string | null | undefined, b: string | null | undef
   if (ba.length !== bb.length) return false
   return crypto.timingSafeEqual(ba, bb)
 }
+
+/**
+ * 署名がどのチャネルのものかを判定する。
+ *
+ * 鍵は**両方とも省略可能**にしてある。運用構成によっては片方しか設定しない
+ * （例：顧客対応チャネルの受信を Lステップの転送に任せる場合、
+ * `LINE_CHANNEL_SECRET` は設定しない）ためで、
+ * 「未設定の鍵を必須として読む」と受け口全体が 500 になり、
+ * 署名を見る前に全リクエストを取りこぼす。
+ */
+export function resolveChannelBySignature(
+  rawBody: string,
+  signature: string | null,
+  secrets: { main?: string; notify?: string },
+): 'MAIN' | 'NOTIFY' | null {
+  if (!signature) return null
+  if (secrets.main && verifyLineSignature(rawBody, signature, secrets.main)) return 'MAIN'
+  if (secrets.notify && verifyLineSignature(rawBody, signature, secrets.notify)) return 'NOTIFY'
+  return null
+}

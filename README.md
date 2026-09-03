@@ -163,7 +163,7 @@
 | 定期実行 | Netlify Scheduled Functions（既定）/ Vercel Cron / GitHub Actions（要手動有効化）<br>未返信リマインド 5分ごと ／ 追客 1時間ごと |
 | 社内通知 | **Slack Incoming Webhook（採用）** ／ Discord・LINE WORKS・Google Chat ／ LINE push（グループ・個人）も選択可 |
 | 認証 | scrypt + HMAC署名付き HttpOnly Cookie（外部依存なし） |
-| テスト | Vitest（167ケース）＋ 実DB結合確認スクリプト（未返信10シナリオ / 追客39項目）。GitHub Actions で自動実行 |
+| テスト | Vitest（230ケース）＋ 実DB結合確認スクリプト（未返信10シナリオ / 追客40項目）。GitHub Actions で自動実行 |
 
 **月額運用コスト：¥0（Netlify + Supabase 無料枠 + Slack通知）〜 約¥5,000**
 社内通知を Slack にしたことで、社内リマインド分（想定1,500通/月）の LINE 通数はゼロ。
@@ -209,11 +209,11 @@ PostgreSQL のサービスコンテナを立てて結合確認まで流すため
 手元で実行する場合:
 
 ```bash
-npm test                # 判定ロジック 167ケース
+npm test                # 判定ロジック 230ケース
 npm run typecheck       # 型チェック
 npm run build           # 本番ビルド（DB不要）
 
-DATABASE_URL=postgresql://... npm run check:followup   # 実DBでの追客の結合確認 39項目
+DATABASE_URL=postgresql://... npm run check:followup   # 実DBでの追客の結合確認 40項目
 DATABASE_URL=postgresql://... npm run check:reminder   # 実DBでの未返信リマインドの結合確認 10シナリオ
 DATABASE_URL=postgresql://... npm run followups:run    # 追客の定期実行を手元で1回だけ走らせる
 ```

@@ -3,6 +3,12 @@
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
+import {
+  DEFAULT_NOTIFICATION_TEMPLATE,
+  TEMPLATE_PLACEHOLDERS,
+  renderNotificationTemplate,
+} from '@/lib/domain/notificationText'
+
 const DAYS = [
   { key: 'mon', label: '月' },
   { key: 'tue', label: '火' },
@@ -28,8 +34,21 @@ export interface GeneralSettings {
   maxSilenceGuardMinutes: number
   watchdogDelayMinutes: number
   alwaysNotifyDefaultGroup: boolean
+  digestRepeatReminders: boolean
   includeMessageBodyInNotification: boolean
   messageExcerptLength: number
+  notificationTemplate: string | null
+}
+
+/** 編集中の文面がどう届くかを、その場で見せるための見本 */
+const PREVIEW_VALUES: Record<string, string> = {
+  '{印}': '⚠️',
+  '{経過時間}': '1時間20分',
+  '{補足}': '',
+  '{顧客名}': '山田太郎',
+  '{担当者}': '内田翔太',
+  '{メッセージ}': '内見の件ですが、来週の土曜日は空いていますでしょうか？',
+  '{URL}': 'https://remindsystem.netlify.app/customers/abc123',
 }
 
 export function GeneralForm({ initial }: { initial: GeneralSettings }) {
@@ -145,6 +164,10 @@ export function GeneralForm({ initial }: { initial: GeneralSettings }) {
             ['countBusinessHoursOnly', '未返信の経過時間を営業時間だけで数える'],
             ['openOnPublicHolidays', '祝日も営業する'],
             ['alwaysNotifyDefaultGroup', '担当者が決まっていても、社内共通の通知先へ同報する（事務など担当者以外も返信する場合）'],
+            [
+              'digestRepeatReminders',
+              '2回目以降のリマインドを1通にまとめる（初回とエスカレーションはボタン付きの個別通知のまま）',
+            ],
             ['includeMessageBodyInNotification', '通知に顧客メッセージの本文を含める'],
           ] as const
         ).map(([key, label]) => (
@@ -153,6 +176,49 @@ export function GeneralForm({ initial }: { initial: GeneralSettings }) {
             {label}
           </label>
         ))}
+      </div>
+
+      <div className="mt-6 border-t border-slate-100 pt-4">
+        <h3 className="mb-1 text-sm font-bold">リマインドの文面</h3>
+        <p className="mb-2 text-xs text-slate-500">
+          社内LINEに届くリマインドの本文です。空にすると既定の文面に戻ります。
+          ボタン（対応済み・自分が担当）は文面に関係なく常に付きます。
+        </p>
+        <textarea
+          className="input font-mono"
+          rows={7}
+          value={s.notificationTemplate ?? DEFAULT_NOTIFICATION_TEMPLATE}
+          onChange={(e) => setS({ ...s, notificationTemplate: e.target.value })}
+        />
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+          {TEMPLATE_PLACEHOLDERS.map((p) => (
+            <span key={p.key}>
+              <code className="rounded bg-slate-100 px-1 font-mono text-slate-700">{p.key}</code> {p.description}
+            </span>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="btn-secondary mt-2"
+          onClick={() => setS({ ...s, notificationTemplate: DEFAULT_NOTIFICATION_TEMPLATE })}
+        >
+          既定の文面に戻す
+        </button>
+
+        <div className="mt-3">
+          <div className="mb-1 text-xs font-medium text-slate-600">届く見本</div>
+          <pre className="whitespace-pre-wrap rounded-lg bg-slate-900 p-3 text-xs leading-relaxed text-slate-100">
+            {renderNotificationTemplate(
+              (s.notificationTemplate ?? '').trim() || DEFAULT_NOTIFICATION_TEMPLATE,
+              {
+                ...PREVIEW_VALUES,
+                '{メッセージ}': s.includeMessageBodyInNotification
+                  ? PREVIEW_VALUES['{メッセージ}']!.slice(0, s.messageExcerptLength)
+                  : '',
+              },
+            )}
+          </pre>
+        </div>
       </div>
 
       <div className="mt-6 border-t border-slate-100 pt-4">

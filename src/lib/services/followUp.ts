@@ -26,6 +26,7 @@ import {
 } from '@/lib/domain/followUp'
 import { endOfDayIn, startOfDayIn } from '@/lib/domain/time'
 import { prisma } from '@/lib/prisma'
+import { ensureFollowUpDefaults } from './followUpDefaults'
 import { getSettings } from './settings'
 
 type Db = Prisma.TransactionClient | typeof prisma
@@ -39,12 +40,20 @@ export interface FollowUpContext {
   endOfToday: Date
 }
 
+const RULE_QUERY = { where: { enabled: true }, orderBy: [{ status: 'asc' as const }, { step: 'asc' as const }] }
+
 export async function loadFollowUpContext(now = new Date()): Promise<FollowUpContext> {
-  const [settings, rules] = await Promise.all([
-    getSettings(),
-    prisma.followUpRule.findMany({ where: { enabled: true }, orderBy: [{ status: 'asc' }, { step: 'asc' }] }),
-  ])
-  return buildFollowUpContext(rules, settings.timezone, now)
+  const [settings, rules] = await Promise.all([getSettings(), prisma.followUpRule.findMany(RULE_QUERY)])
+  if (rules.length > 0) return buildFollowUpContext(rules, settings.timezone, now)
+
+  /**
+   * 既に稼働している環境へ後から追客管理を入れた場合、初期セットアップ（/setup）は
+   * 済んでいるため追客ルールが投入されない。空なら入れ直す。
+   * upsert で書くので、二重に走っても重複せず既存の調整も消さない。
+   */
+  await ensureFollowUpDefaults(prisma)
+  const seeded = await prisma.followUpRule.findMany(RULE_QUERY)
+  return buildFollowUpContext(seeded, settings.timezone, now)
 }
 
 export function buildFollowUpContext(rules: FollowUpRuleLike[], timezone: string, now = new Date()): FollowUpContext {
