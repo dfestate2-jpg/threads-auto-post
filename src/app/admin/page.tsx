@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { AppShell } from '@/components/AppShell'
 import { CustomerStatusBadge, StatCard } from '@/components/ui'
 import { hasRole, requirePageSession } from '@/lib/auth/guard'
+import { withReadRetry } from '@/lib/prisma'
 import { getSettings } from '@/lib/services/settings'
 import { getAdminOverview } from '@/lib/services/salesStats'
 
@@ -33,7 +34,7 @@ export default async function AdminPage({
   const range = RANGES.find((r) => r.value === params.range) ?? RANGES[0]
   const since = range.days === null ? null : new Date(now.getTime() - range.days * 86_400_000)
 
-  const overview = await getAdminOverview({ timezone: settings.timezone, now, since })
+  const overview = await withReadRetry(() => getAdminOverview({ timezone: settings.timezone, now, since }))
   const canSeeAll = hasRole(session, 'MANAGER')
 
   return (

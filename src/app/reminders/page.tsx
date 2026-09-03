@@ -7,7 +7,7 @@ import { CustomerRows } from '@/components/CustomerRows'
 import { StatCard, formatDateTimeJa } from '@/components/ui'
 import { requirePageSession } from '@/lib/auth/guard'
 import { diffMinutes } from '@/lib/domain/time'
-import { prisma } from '@/lib/prisma'
+import { prisma, withReadRetry } from '@/lib/prisma'
 import { getSettings } from '@/lib/services/settings'
 import { getDashboardStats } from '@/lib/services/stats'
 
@@ -21,17 +21,19 @@ export default async function ReminderDashboardPage() {
   await requirePageSession()
   const settings = await getSettings()
   const now = new Date()
-  const [stats, worst, staff] = await Promise.all([
-    getDashboardStats(settings.timezone, now),
-    prisma.conversation.findMany({
-      where: { replyState: ReplyState.AWAITING },
-      include: { customer: { include: { assignee: true } } },
-      orderBy: { firstUnrepliedAt: 'asc' },
-      take: 10,
-    }),
-    // ワースト10からその場で担当を割り振れるようにするため
-    prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-  ])
+  const [stats, worst, staff] = await withReadRetry(() =>
+    Promise.all([
+      getDashboardStats(settings.timezone, now),
+      prisma.conversation.findMany({
+        where: { replyState: ReplyState.AWAITING },
+        include: { customer: { include: { assignee: true } } },
+        orderBy: { firstUnrepliedAt: 'asc' },
+        take: 10,
+      }),
+      // ワースト10からその場で担当を割り振れるようにするため
+      prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+    ]),
+  )
 
   const cronAlert = !stats.cron.healthy
     ? `⚠️ リマインドの定期実行が ${stats.cron.ageMinutes ?? '—'} 分間確認できていません。Cronの設定・実行状況を確認してください。`

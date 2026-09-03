@@ -6,7 +6,7 @@ import { TodaySection, type TodayItem } from '@/components/followup/TodaySection
 import { StatCard } from '@/components/ui'
 import { requirePageSession } from '@/lib/auth/guard'
 import { formatShortDateJa } from '@/lib/domain/time'
-import { prisma } from '@/lib/prisma'
+import { prisma, withReadRetry } from '@/lib/prisma'
 import { getSettings } from '@/lib/services/settings'
 import { getTodayList } from '@/lib/services/todayList'
 
@@ -32,12 +32,17 @@ export default async function TodayPage({
   const showAll = params.scope === 'all' || !session.staffId
   const assigneeId = showAll ? null : session.staffId
 
-  const [list, staffName] = await Promise.all([
-    getTodayList({ timezone: settings.timezone, now, assigneeId, includeUnassigned: true }),
-    session.staffId
-      ? prisma.staff.findUnique({ where: { id: session.staffId }, select: { name: true } })
-      : Promise.resolve(null),
-  ])
+  const [list, staffName] = await withReadRetry(() =>
+
+    Promise.all([
+      getTodayList({ timezone: settings.timezone, now, assigneeId, includeUnassigned: true }),
+      session.staffId
+        ? prisma.staff.findUnique({ where: { id: session.staffId }, select: { name: true } })
+        : Promise.resolve(null),
+
+    ]),
+
+  )
 
   const toItem = (r: (typeof list.overdue)[number]): TodayItem => ({
     id: r.id,

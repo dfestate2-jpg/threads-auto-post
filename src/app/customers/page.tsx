@@ -7,7 +7,7 @@ import { ActionBadge, CustomerStatusBadge, PriorityBadge, formatDateTimeJa } fro
 import { requirePageSession } from '@/lib/auth/guard'
 import { TERMINAL_STATUSES } from '@/lib/domain/followUp'
 import { endOfDayIn, startOfDayIn } from '@/lib/domain/time'
-import { prisma } from '@/lib/prisma'
+import { prisma, withReadRetry } from '@/lib/prisma'
 import { getSettings } from '@/lib/services/settings'
 
 export const dynamic = 'force-dynamic'
@@ -68,18 +68,23 @@ export default async function CustomersPage({
       : {}),
   }
 
-  const [rows, total, staff] = await Promise.all([
-    prisma.customer.findMany({
-      where,
-      include: { assignee: { select: { name: true } } },
-      // 期限が近い顧客ほど上。未設定（＝要判断）は最後に回す
-      orderBy: [{ nextActionAt: { sort: 'asc', nulls: 'last' } }],
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-    }),
-    prisma.customer.count({ where }),
-    prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-  ])
+  const [rows, total, staff] = await withReadRetry(() =>
+
+    Promise.all([
+      prisma.customer.findMany({
+        where,
+        include: { assignee: { select: { name: true } } },
+        // 期限が近い顧客ほど上。未設定（＝要判断）は最後に回す
+        orderBy: [{ nextActionAt: { sort: 'asc', nulls: 'last' } }],
+        skip: (page - 1) * PAGE_SIZE,
+        take: PAGE_SIZE,
+      }),
+      prisma.customer.count({ where }),
+      prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+
+    ]),
+
+  )
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 

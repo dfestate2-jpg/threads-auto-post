@@ -94,3 +94,7 @@ jobs:
       # 追客の自動遷移・優先度・今日やることの仕分けを実DBで検証する
       - name: Integration check (追客管理)
         run: npx tsx scripts/followup-check.ts
+
+      # ダッシュボードの集計は1回のSQLにまとめてあるため、条件ごとの個別集計と突き合わせる
+      - name: Integration check (ダッシュボード集計)
+        run: npx tsx scripts/stats-check.ts

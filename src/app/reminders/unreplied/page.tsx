@@ -7,7 +7,7 @@ import { CustomerFilters } from '@/components/CustomerFilters'
 import { CustomerRows } from '@/components/CustomerRows'
 import { requirePageSession } from '@/lib/auth/guard'
 import { diffMinutes, formatElapsedJa } from '@/lib/domain/time'
-import { prisma } from '@/lib/prisma'
+import { prisma, withReadRetry } from '@/lib/prisma'
 import { getSettings } from '@/lib/services/settings'
 
 export const dynamic = 'force-dynamic'
@@ -56,17 +56,22 @@ export default async function UnrepliedCustomersPage({
       : {}),
   }
 
-  const [rows, total, staff] = await Promise.all([
-    prisma.conversation.findMany({
-      where,
-      include: { customer: { include: { assignee: true } } },
-      orderBy: [{ firstUnrepliedAt: 'asc' }, { updatedAt: 'desc' }],
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-    }),
-    prisma.conversation.count({ where }),
-    prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-  ])
+  const [rows, total, staff] = await withReadRetry(() =>
+
+    Promise.all([
+      prisma.conversation.findMany({
+        where,
+        include: { customer: { include: { assignee: true } } },
+        orderBy: [{ firstUnrepliedAt: 'asc' }, { updatedAt: 'desc' }],
+        skip: (page - 1) * PAGE_SIZE,
+        take: PAGE_SIZE,
+      }),
+      prisma.conversation.count({ where }),
+      prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+
+    ]),
+
+  )
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 

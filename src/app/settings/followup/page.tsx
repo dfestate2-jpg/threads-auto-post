@@ -4,17 +4,19 @@ import { AppShell } from '@/components/AppShell'
 import { FollowUpRuleTable } from '@/components/followup/FollowUpRuleTable'
 import { TemplateTable } from '@/components/followup/TemplateTable'
 import { requirePageSession } from '@/lib/auth/guard'
-import { prisma } from '@/lib/prisma'
+import { prisma, withReadRetry } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
 
 /** 追客ルールとLINEテンプレートの設定。【指示書 9・10】 */
 export default async function FollowUpSettingsPage() {
   await requirePageSession()
-  const [rules, templates] = await Promise.all([
-    prisma.followUpRule.findMany({ orderBy: [{ status: 'asc' }, { step: 'asc' }] }),
-    prisma.messageTemplate.findMany({ orderBy: [{ sortOrder: 'asc' }] }),
-  ])
+  const [rules, templates] = await withReadRetry(() =>
+    Promise.all([
+      prisma.followUpRule.findMany({ orderBy: [{ status: 'asc' }, { step: 'asc' }] }),
+      prisma.messageTemplate.findMany({ orderBy: [{ sortOrder: 'asc' }] }),
+    ]),
+  )
 
   return (
     <AppShell>
