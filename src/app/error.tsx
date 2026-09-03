@@ -14,44 +14,16 @@
  */
 import { useEffect, useState } from 'react'
 
-/** 読み込み失敗＝更新で直る類か。文言はブラウザごとに違うので広めに拾う */
-function isStaleAssetError(error: Error): boolean {
-  const text = `${error.name} ${error.message}`
-  return /chunk|dynamically imported module|module script failed|importing a module/i.test(text)
-}
-
-/**
- * 自動リロードは1回だけ。
- * 本当に壊れている場合に無限リロードで操作不能になるほうが、よほど困る。
- */
-const RELOAD_FLAG = 'reload-after-stale-asset'
+import { claimAutoReload, isStaleAssetError } from '@/lib/staleAsset'
 
 export default function AppError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   const [reloading, setReloading] = useState(false)
 
   useEffect(() => {
     if (!isStaleAssetError(error)) return
-    let alreadyTried = false
-    try {
-      alreadyTried = sessionStorage.getItem(RELOAD_FLAG) === '1'
-      sessionStorage.setItem(RELOAD_FLAG, '1')
-    } catch {
-      // プライベートブラウズ等で使えないことがある。その場合は自動リロードしない
-      return
-    }
-    if (alreadyTried) return
+    if (!claimAutoReload()) return
     setReloading(true)
     location.reload()
-  }, [error])
-
-  useEffect(() => {
-    // 正常に描画できたら次の機会にまた自動リロードできるようにする
-    if (isStaleAssetError(error)) return
-    try {
-      sessionStorage.removeItem(RELOAD_FLAG)
-    } catch {
-      /* 使えなくても支障はない */
-    }
   }, [error])
 
   if (reloading) {
@@ -80,7 +52,15 @@ export default function AppError({ error, reset }: { error: Error & { digest?: s
             もう一度試す
           </button>
         </div>
-        {error.digest ? <p className="mt-4 font-mono text-xs text-slate-400">エラーID: {error.digest}</p> : null}
+        {/*
+          原因の手がかりを画面に出しておく。社内の管理者しか見ない画面なので
+          伏せる理由がなく、これが無いと「たまに出る」を報告してもらっても
+          何が起きたのか特定できない。
+        */}
+        <p className="mt-4 break-words font-mono text-[11px] leading-relaxed text-slate-400">
+          {error.name}: {error.message}
+          {error.digest ? <span className="block">ID: {error.digest}</span> : null}
+        </p>
       </div>
     </main>
   )

@@ -6,25 +6,13 @@
  * globals.css も当たらない前提で素のスタイルだけで組む。
  *
  * error.tsx と同じく、デプロイ直後のチャンク読み込み失敗は
- * 再読み込みで必ず直るため、人に見せる前に1回だけ自動で回復させる。
+ * 再読み込みで必ず直るため、人に見せる前に自動で回復させる。
  */
-const RELOAD_FLAG = 'reload-after-stale-asset'
-
-function isStaleAssetError(error: Error): boolean {
-  const text = `${error.name} ${error.message}`
-  return /chunk|dynamically imported module|module script failed|importing a module/i.test(text)
-}
+import { claimAutoReload, isStaleAssetError } from '@/lib/staleAsset'
 
 export default function GlobalError({ error }: { error: Error & { digest?: string }; reset: () => void }) {
-  if (typeof window !== 'undefined' && isStaleAssetError(error)) {
-    try {
-      if (sessionStorage.getItem(RELOAD_FLAG) !== '1') {
-        sessionStorage.setItem(RELOAD_FLAG, '1')
-        location.reload()
-      }
-    } catch {
-      /* sessionStorage が使えない環境では自動リロードしない */
-    }
+  if (typeof window !== 'undefined' && isStaleAssetError(error) && claimAutoReload()) {
+    location.reload()
   }
 
   return (
@@ -62,11 +50,18 @@ export default function GlobalError({ error }: { error: Error & { digest?: strin
           >
             再読み込み
           </button>
-          {error.digest ? (
-            <p style={{ marginTop: 16, fontSize: 12, color: '#94a3b8', fontFamily: 'monospace' }}>
-              エラーID: {error.digest}
-            </p>
-          ) : null}
+          <p
+            style={{
+              marginTop: 16,
+              fontSize: 11,
+              color: '#94a3b8',
+              fontFamily: 'monospace',
+              wordBreak: 'break-word',
+            }}
+          >
+            {error.name}: {error.message}
+            {error.digest ? <span style={{ display: 'block' }}>ID: {error.digest}</span> : null}
+          </p>
         </div>
       </body>
     </html>
