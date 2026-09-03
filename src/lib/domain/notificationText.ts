@@ -103,3 +103,39 @@ export function redactText(text: string | null | undefined): string {
   if (!text) return '(empty)'
   return `(${text.length} chars)`
 }
+
+export interface DigestEntry {
+  customerName: string
+  /** 最初の未返信からの経過（分） */
+  totalUnrepliedMinutes: number
+  assigneeName: string | null
+}
+
+/**
+ * 2回目以降のリマインドをまとめた1通。
+ *
+ * 問い合わせが多いと1件1通では社内LINEが埋まり、かえって見落とす。
+ * 初回だけ個別（ボタン付き）で出し、繰り返しはここにまとめる。
+ *
+ * **まとめ通知にボタンは付けない。** ボタンは宛先の顧客が1人に定まって
+ * いないと押し間違いを生み、「対応していない案件を対応済みにする」という
+ * 一番まずい事故になる。操作は一覧から個別に開いて行う。
+ *
+ * 放置が長い順に並べる。上から読めば手を付ける順になる。
+ */
+export function buildDigestText(entries: DigestEntry[], listUrl?: string | null): string {
+  const sorted = [...entries].sort((a, b) => b.totalUnrepliedMinutes - a.totalUnrepliedMinutes)
+  const lines: string[] = [`⚠️ 未返信 ${sorted.length}件（継続中）`, '']
+
+  for (const e of sorted) {
+    const mark = e.totalUnrepliedMinutes >= 1440 ? '🚨🚨' : e.totalUnrepliedMinutes >= 180 ? '🚨' : '⚠️'
+    lines.push(
+      `${mark} ${e.customerName} 様 ${formatElapsedJa(e.totalUnrepliedMinutes)}（担当：${e.assigneeName ?? '未設定'}）`,
+    )
+  }
+
+  lines.push('')
+  lines.push('対応済みにするには一覧から開いてください。')
+  if (listUrl) lines.push(listUrl)
+  return lines.join('\n')
+}

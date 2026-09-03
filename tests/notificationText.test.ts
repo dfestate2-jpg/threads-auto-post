@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildExcerpt, buildNotificationText } from '@/lib/domain/notificationText'
+import { buildDigestText, buildExcerpt, buildNotificationText } from '@/lib/domain/notificationText'
 import { formatElapsedJa } from '@/lib/domain/time'
 import { escalationDedupeKey, guardDedupeKey, routineDedupeKey, watchdogDedupeKey } from '@/lib/domain/dedupe'
 import { buildWebhookPayload, detectWebhookFlavor } from '@/lib/notify/webhookPayload'
@@ -110,6 +110,47 @@ describe('社内LINEへの通知本文', () => {
     expect(text).toContain('🛠 【システム警告】未返信リマインドの配信が遅延しています')
     expect(text).toContain('リマインド回数：2回目')
     expect(text).toContain('受信状況')
+  })
+})
+
+describe('まとめ通知（2回目以降）', () => {
+  const entries = [
+    { customerName: '鈴木一郎', totalUnrepliedMinutes: 120, assigneeName: '舛谷' },
+    { customerName: '山田太郎', totalUnrepliedMinutes: 1560, assigneeName: '内田' },
+    { customerName: '佐藤花子', totalUnrepliedMinutes: 360, assigneeName: null },
+  ]
+
+  it('件数と一覧が入る', () => {
+    const text = buildDigestText(entries)
+    expect(text.split('\n')[0]).toBe('⚠️ 未返信 3件（継続中）')
+    expect(text).toContain('山田太郎 様 1日2時間（担当：内田）')
+    expect(text).toContain('佐藤花子 様 6時間（担当：未設定）')
+  })
+
+  /** 上から読めば手を付ける順になるようにする */
+  it('放置が長い順に並ぶ', () => {
+    const text = buildDigestText(entries)
+    const order = ['山田太郎', '佐藤花子', '鈴木一郎'].map((n) => text.indexOf(n))
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+  })
+
+  it('経過時間に応じて印が変わる', () => {
+    const text = buildDigestText(entries)
+    expect(text).toContain('🚨🚨 山田太郎')
+    expect(text).toContain('🚨 佐藤花子')
+    expect(text).toContain('⚠️ 鈴木一郎')
+  })
+
+  it('一覧のURLを付けられる', () => {
+    expect(buildDigestText(entries, 'https://example.com/customers')).toContain('https://example.com/customers')
+  })
+
+  it('操作は一覧からと案内する', () => {
+    expect(buildDigestText(entries)).toContain('対応済みにするには一覧から開いてください。')
+  })
+
+  it('1件でも成立する', () => {
+    expect(buildDigestText([entries[0]!]).split('\n')[0]).toBe('⚠️ 未返信 1件（継続中）')
   })
 })
 

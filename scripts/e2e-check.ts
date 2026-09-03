@@ -592,6 +592,64 @@ async function main(): Promise<void> {
       (await prisma.conversation.findUniqueOrThrow({ where: { id: conv13.id } })).replyState === ReplyState.AWAITING,
     )
 
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑯ 2回目以降のリマインドを1通にまとめる')
+    await reset()
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: { respectBusinessHours: false, digestRepeatReminders: true },
+    })
+    await prisma.notificationChannel.create({
+      data: { name: '社内LINEグループ', type: ChannelType.WEBHOOK, target: `http://127.0.0.1:${PORT}/hook`, purpose: ChannelPurpose.DEFAULT_GROUP },
+    })
+
+    for (const n of [1, 2, 3]) {
+      await inbound(`Udigest${n}`, `まとめ確認${n}`, T0, `msg-16-${n}`)
+    }
+
+    received.length = 0
+    const digestFirst = await runReminderJob(new Date(T0.getTime() + 60 * MIN))
+    check('初回は3件が個別に送られる', digestFirst.sent === 3, digestFirst)
+    check('初回の通知は3通', received.length === 3, received.length)
+    check('初回にまとめ通知は出ない', !received.some((r) => r.includes('件（継続中）')), received[0])
+
+    received.length = 0
+    const digestSecond = await runReminderJob(new Date(T0.getTime() + 130 * MIN))
+    check('2回目も3件とも送信済みとして処理される', digestSecond.sent === 3, digestSecond)
+    check('2回目は1通にまとまる', received.length === 1, received.length)
+    check('まとめ通知に3件すべて載る', received[0]?.includes('未返信 3件（継続中）') === true, received[0])
+    for (const n of [1, 2, 3]) {
+      check(`まとめ通知に${n}件目が含まれる`, received[0]?.includes(`Udigest${n}`) === true)
+    }
+
+    // まとめても予定と記録は1件ずつ進む＝取りこぼしが起きない
+    const digestConvs = await prisma.conversation.findMany({
+      where: { customer: { lineUserId: { startsWith: 'Udigest' } } },
+    })
+    check('まとめても回数は1件ずつ進む', digestConvs.every((c) => c.reminderCount === 2), digestConvs.map((c) => c.reminderCount))
+    check('まとめても次回予定が入る', digestConvs.every((c) => c.nextReminderAt !== null))
+    check(
+      'まとめても記録は1件ずつ残る',
+      (await prisma.reminder.count({ where: { conversationId: { in: digestConvs.map((c) => c.id) }, sequence: 2 } })) === 3,
+    )
+
+    // 1件だけ返信すると、次のまとめから外れる
+    await recordOutboundMessage(
+      {
+        customerId: digestConvs[0]!.customerId,
+        text: '返信しました',
+        messageType: 'text',
+        sentAt: new Date(T0.getTime() + 140 * MIN),
+        source: 'ADMIN_UI',
+        via: ResolvedVia.ADMIN_REPLY,
+      },
+      await loadPolicyContext(T0),
+    )
+    received.length = 0
+    await runReminderJob(new Date(T0.getTime() + 200 * MIN))
+    check('返信済みはまとめ通知から外れる', received.every((r) => !r.includes(digestConvs[0]!.customerId)), received[0])
+
   } finally {
     server.close()
     await prisma.$disconnect()

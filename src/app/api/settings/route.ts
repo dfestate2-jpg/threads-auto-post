@@ -41,6 +41,7 @@ const schema = z.object({
   maxSilenceGuardMinutes: z.number().int().min(0).max(10080).optional(),
   watchdogDelayMinutes: z.number().int().min(5).max(1440).optional(),
   alwaysNotifyDefaultGroup: z.boolean().optional(),
+  digestRepeatReminders: z.boolean().optional(),
   includeMessageBodyInNotification: z.boolean().optional(),
   messageExcerptLength: z.number().int().min(10).max(500).optional(),
   dataRetentionMonths: z.number().int().min(0).max(120).optional(),

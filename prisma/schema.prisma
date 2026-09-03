@@ -348,6 +348,11 @@ model AppSettings {
   /// 担当者以外（事務など）が返信することがあるため、既定で有効。
   alwaysNotifyDefaultGroup Boolean @default(true)
 
+  /// 2回目以降のリマインドを1通にまとめて送る。
+  /// 問い合わせが多いと1件1通では社内LINEが埋まり、かえって見落とすため。
+  /// 初回とエスカレーションは、ボタン付きの個別通知のまま。
+  digestRepeatReminders Boolean @default(true)
+
   /// 通知本文に顧客メッセージを含めるか
   includeMessageBodyInNotification Boolean @default(true)
   /// 通知本文に載せるメッセージの最大文字数
