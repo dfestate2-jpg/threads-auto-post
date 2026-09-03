@@ -45,16 +45,16 @@ describe('statelessToken', () => {
   it('発行数に上限のあるエンドポイントを絶対に使わない', async () => {
     const calls = stubFetch(() => okToken('tok-1'))
     await getStatelessChannelAccessToken(CHANNEL_ID, SECRET)
-    expect(calls[0].url).toBe('https://api.line.me/oauth2/v3/token')
-    expect(calls[0].url).not.toContain('/v2/oauth/accessToken')
+    expect(calls[0]!.url).toBe('https://api.line.me/oauth2/v3/token')
+    expect(calls[0]!.url).not.toContain('/v2/oauth/accessToken')
   })
 
   it('client_credentials をフォーム形式で送る', async () => {
     const calls = stubFetch(() => okToken('tok-1'))
     await getStatelessChannelAccessToken(CHANNEL_ID, SECRET)
-    const headers = calls[0].init.headers as Record<string, string>
+    const headers = calls[0]!.init.headers as Record<string, string>
     expect(headers['Content-Type']).toBe('application/x-www-form-urlencoded')
-    const body = new URLSearchParams(String(calls[0].init.body))
+    const body = new URLSearchParams(String(calls[0]!.init.body))
     expect(body.get('grant_type')).toBe('client_credentials')
     expect(body.get('client_id')).toBe(CHANNEL_ID)
     expect(body.get('client_secret')).toBe(SECRET)
