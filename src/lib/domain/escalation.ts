@@ -43,8 +43,13 @@ export interface ResolveTargetsInput {
   assignee: StaffTarget | null
   manager: StaffTarget | null
   admins: StaffTarget[]
-  /** 担当者未設定時・notifyGroup 時に使う社内共通グループ */
+  /** 社内共通の通知先。担当者未設定時の受け皿であり、同報先でもある */
   groupChannels: ChannelTarget[]
+  /**
+   * 担当者が設定されていても社内共通の通知先へ同報するか。
+   * 担当者以外（事務など）が返信する運用では true にする。
+   */
+  alwaysIncludeGroup?: boolean
   /** 管理者向けチャネル */
   adminChannels: ChannelTarget[]
   /** 主経路が空・失敗したときの最終手段 */
@@ -119,6 +124,12 @@ export function resolveNotifyTargets(input: ResolveTargetsInput): NotifyTarget[]
     !!input.assignee && input.assignee.active && input.assignee.notifyEnabled && !!input.assignee.lineUserId
   if (assigneeNotifiable) {
     pushStaff(out, input.assignee, 'ASSIGNEE')
+    /**
+     * 担当者以外（事務など）が返信することがあるため、既定では社内共通の通知先へも同報する。
+     * 「担当者にしか届かない」と、担当者が外出中の案件を他の人が拾えない。
+     * 宛先は最後に重複排除されるので、担当者が共通の通知先にも入っていても二重には送られない。
+     */
+    if (input.alwaysIncludeGroup !== false) pushChannels(out, input.groupChannels, 'GROUP')
   } else {
     pushChannels(out, input.groupChannels, 'GROUP')
   }

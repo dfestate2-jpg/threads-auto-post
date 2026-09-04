@@ -7,7 +7,7 @@
 | 区分 | 認証方法 | 対象 |
 |------|---------|------|
 | LINE | `x-line-signature`（生ボディの HMAC-SHA256 / base64） | `/api/line/webhook` |
-| Cron | `x-cron-secret` または `Authorization: Bearer <CRON_SECRET>`（定数時間比較） | `/api/cron/reminders` |
+| Cron | `x-cron-secret` / `Authorization: Bearer <CRON_SECRET>` / クエリ `?secret=`（定数時間比較） | `/api/cron/reminders` |
 | Ingest | `x-ingest-secret`（定数時間比較） | `/api/ingest/outbound` |
 | 管理画面 | HttpOnly セッションCookie ＋ `Origin` 検証（CSRF対策） | それ以外すべて |
 | 公開 | なし | `/api/health` |
@@ -51,6 +51,10 @@ LINE Developers の Webhook URL に設定する。
 
 ```bash
 curl -X POST https://<host>/api/cron/reminders -H "x-cron-secret: $CRON_SECRET"
+
+# ヘッダーを付けられないスケジューラ向けに、クエリ文字列でも受け付ける
+# （?secret= / ?cron_secret= / ?token=。ヘッダーがある場合はヘッダーが優先）
+curl "https://<host>/api/cron/reminders?secret=$CRON_SECRET"
 ```
 
 ```jsonc

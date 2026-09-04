@@ -40,6 +40,10 @@ const schema = z.object({
   countBusinessHoursOnly: z.boolean().optional(),
   maxSilenceGuardMinutes: z.number().int().min(0).max(10080).optional(),
   watchdogDelayMinutes: z.number().int().min(5).max(1440).optional(),
+  alwaysNotifyDefaultGroup: z.boolean().optional(),
+  digestRepeatReminders: z.boolean().optional(),
+  // 空文字は「既定に戻す」の意味。null にして保存する
+  notificationTemplate: z.string().max(2000).nullable().optional(),
   includeMessageBodyInNotification: z.boolean().optional(),
   messageExcerptLength: z.number().int().min(10).max(500).optional(),
   dataRetentionMonths: z.number().int().min(0).max(120).optional(),
@@ -56,6 +60,13 @@ export async function PATCH(request: Request): Promise<NextResponse> {
     const data = { ...parsed.data } as Record<string, unknown>
     if (parsed.data.businessHours) {
       data.businessHours = normalizeBusinessHours(parsed.data.businessHours) as unknown as Prisma.InputJsonValue
+    }
+    /**
+     * 文面テンプレートは「空 = 既定に戻す」。
+     * 空文字のまま保存すると、本文が空のリマインドが飛びかねない。
+     */
+    if (parsed.data.notificationTemplate !== undefined) {
+      data.notificationTemplate = parsed.data.notificationTemplate?.trim() ? parsed.data.notificationTemplate : null
     }
     if (parsed.data.timezone) {
       try {

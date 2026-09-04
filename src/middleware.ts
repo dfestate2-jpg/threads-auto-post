@@ -15,6 +15,6 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // API・ログイン・静的ファイルは対象外（Webhook / Cron は独自認証）
-  matcher: ['/((?!api|login|_next/static|_next/image|favicon.ico).*)'],
+  // API・ログイン・初回セットアップ・静的ファイルは対象外（Webhook / Cron は独自認証）
+  matcher: ['/((?!api|login|setup|_next/static|_next/image|favicon.ico).*)'],
 }

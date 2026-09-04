@@ -37,12 +37,33 @@ describe('authenticateRelay', () => {
     })
   })
 
-  it('署名が付いているのに合わない場合は、トークンが正しくても拒否する', () => {
+  /**
+   * 実運用で踏んだ事故の再発防止。
+   * Lステップは顧客対応チャネルの署名を付けて転送してくるが、その構成では
+   * 顧客対応チャネルのシークレットを設定しないこともある。照合できる鍵が
+   * 手元に無いだけなのに「偽装」と決めつけて弾くと、正規の顧客メッセージが
+   * 1件残らず落ちる。トークンが一致するなら受理しなければならない。
+   */
+  it('署名が合わなくても、トークンが正しければ受理する', () => {
     const result = authenticateRelay({
       ...base,
       signature: sign(BODY, 'wrong-secret'),
       presentedToken: TOKEN,
     })
+    expect(result).toEqual({ ok: true, via: 'RELAY_TOKEN' })
+  })
+
+  it('署名が合わず、トークンも違えば拒否する', () => {
+    const result = authenticateRelay({
+      ...base,
+      signature: sign(BODY, 'wrong-secret'),
+      presentedToken: 'wrong',
+    })
+    expect(result).toEqual({ ok: false, reason: 'BAD_SIGNATURE' })
+  })
+
+  it('署名が合わず、トークンも付いていなければ拒否する', () => {
+    const result = authenticateRelay({ ...base, signature: sign(BODY, 'wrong-secret') })
     expect(result).toEqual({ ok: false, reason: 'BAD_SIGNATURE' })
   })
 
@@ -63,6 +84,40 @@ describe('authenticateRelay', () => {
     expect(authenticateRelay(base)).toEqual({ ok: false, reason: 'NO_CREDENTIAL' })
   })
 
+  it('チャネルシークレットが未設定でも、トークンがあれば受理する', () => {
+    const result = authenticateRelay({
+      ...base,
+      channelSecret: undefined,
+      notifyChannelSecret: undefined,
+      presentedToken: TOKEN,
+    })
+    expect(result).toEqual({ ok: true, via: 'RELAY_TOKEN' })
+  })
+
+  it('照合する鍵が無い状態で署名だけ来ても、トークンで判定する', () => {
+    // 鍵が無ければ署名は検証しようがない。署名の存在だけで拒否して
+    // 受け口全体が使えなくなるのを避ける
+    const result = authenticateRelay({
+      ...base,
+      channelSecret: undefined,
+      notifyChannelSecret: undefined,
+      signature: 'whatever',
+      presentedToken: TOKEN,
+    })
+    expect(result).toEqual({ ok: true, via: 'RELAY_TOKEN' })
+  })
+
+  it('鍵が無く、トークンも無ければ拒否する', () => {
+    const result = authenticateRelay({
+      ...base,
+      channelSecret: undefined,
+      notifyChannelSecret: undefined,
+      signature: 'whatever',
+      expectedToken: undefined,
+    })
+    expect(result).toEqual({ ok: false, reason: 'NO_CREDENTIAL' })
+  })
+
   it('ボディが1文字でも違えば署名は通らない', () => {
     const result = authenticateRelay({
       ...base,
@@ -70,5 +125,15 @@ describe('authenticateRelay', () => {
       signature: sign(BODY, SECRET),
     })
     expect(result).toEqual({ ok: false, reason: 'BAD_SIGNATURE' })
+  })
+
+  /** 署名が正しく検証できるなら、そちらを優先する（トークンより強い経路） */
+  it('署名もトークンも正しければ、署名経路として受理する', () => {
+    const result = authenticateRelay({
+      ...base,
+      signature: sign(BODY, SECRET),
+      presentedToken: TOKEN,
+    })
+    expect(result).toEqual({ ok: true, via: 'LINE_SIGNATURE', channel: 'MAIN' })
   })
 })

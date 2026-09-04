@@ -1,19 +1,44 @@
-# 公式LINE 未返信リマインドシステム
+# 不動産仲介 自動追客管理システム
 
-不動産会社の公式LINEに届いた顧客メッセージのうち、**社内の誰も返信していないもの**を自動検知し、
-社内LINEへ繰り返しリマインドするシステム。
+**営業担当が顧客管理をしなくても、追客が勝手に回る**ことを目的にしたシステム。
 
-> **設計の中心にある要件**
-> 「顧客からLINEが来たのに、社内の誰も返信していない状態を絶対に見逃さない」
-> かつ「二重通知・通知漏れ・返信済みなのに通知が続く問題を起こさない」
+> 営業担当が顧客管理をするのではなく、**システムが追客を管理し、営業担当には今日やるべき営業だけを提示する。**
+
+一般的なCRMではなく **追客漏れ防止システム** として設計している。
+ログインした瞬間に「今日、この顧客に何をすればいいか」が分かる状態を作ることだけを目的とし、
+顧客一覧を見せることは目的にしていない。
+
+営業担当に残す仕事は **話す・LINEする・電話する・提案する・内見する・申込を取る・成約する** だけ。
+「誰に連絡するか」「いつ連絡するか」「どんな文章を送るか」「追客漏れがないか」はシステムが判断・管理する。
+
+このリポジトリには2つの仕組みが入っている。扱う時間軸が違うため、画面もジョブも分けてある。
+
+| | 追客管理 | 公式LINE 未返信リマインド |
+|---|---|---|
+| 見るもの | 追客が止まっていないか | 顧客を待たせていないか |
+| 時間軸 | 日・週 | 分・時間 |
+| 画面 | `/`（今日やること） | `/reminders` |
+| 定期実行 | 1時間ごと | 5分ごと |
+
+両者は接続していて、**顧客からLINEが来たら追客ステータスが自動で復活し、返信が最優先の「今日やること」になる。**
 
 ---
 
 ## ドキュメント
 
+### 追客管理
+
 | # | 内容 |
 |---|------|
-| [**00. はじめての導入**](docs/00-beginner-setup.md) | **プログラム未経験の方向けの導入手順書。まずはここから** |
+| [10. 要件整理](docs/10-followup-requirements.md) | 目的・指示書の要求と実装の対応・MVPの実装状況 |
+| [11. 設計](docs/11-followup-design.md) | 状態遷移・自動追客ルール・優先度判定・DB設計 |
+| [**12. 起動と操作方法**](docs/12-followup-operations.md) | **手元での起動手順／営業担当の使い方／管理者の使い方** |
+
+### 公式LINE 未返信リマインド
+
+| # | 内容 |
+|---|------|
+| [**00. はじめての導入**](docs/00-beginner-setup.md) | **プログラム未経験の方向けの導入手順書** |
 | [01. 実装前整理](docs/01-requirements.md) | 必要なAPI / アカウント / DB / システム構成 / **月額運用コスト** / セキュリティ |
 | [02. システム設計](docs/02-architecture.md) | 状態機械、二重通知を防ぐ3段構え、通知漏れ対策 |
 | [03. データベース設計](docs/03-database-design.md) | ER図・全テーブル定義・データ量見積り |
@@ -21,7 +46,53 @@
 | [05. UI設計](docs/05-ui-design.md) | 画面構成 |
 | [06. セットアップ・運用手順](docs/06-operations.md) | LINE設定 → デプロイ → 監視 → トラブルシューティング |
 | [07. 担当者の返信をどう検知するか](docs/07-line-reply-detection.md) | **LINE側の制約と、その回避策（必読）** |
-| [10. 銀行入金のスプレッドシート自動反映](docs/10-bank-deposit-sync.md) | 取得方式の比較 / 構成 / 費用 / セキュリティ。コードと手順は [gas/](gas/README.md) |
+| [08. Lステップとの共存](docs/08-lstep-coexistence.md) | Webhook転送による共存構成 |
+| [13. 銀行入金のスプレッドシート自動反映](docs/13-bank-deposit-sync.md) | 取得方式の比較 / 構成 / 費用 / セキュリティ。コードと手順は [gas/](gas/README.md) |
+
+---
+
+## 追客管理でできること
+
+### 今日やること（トップ画面）
+
+ログイン直後に、対応が必要な顧客だけが上から並ぶ。
+
+```
+🔴 期限超過   6件
+   S  青木 健一   2日超過   見積書待ち 3日   →  💬 LINE  見積書の進捗連絡    [LINEを送る] [対応した]
+   A  井上 みゆき 2日超過   返信なし 5日     →  💬 LINE  LINEで再アプローチ  [LINEを送る] [対応した]
+🔴 最優先     4件
+   S  LINE 花子             物件提案中       →  💬 LINE  顧客から返信あり。内容を確認して返信
+🟡 通常       1件
+🟢 自動追客中 6名   ← 何もしなくてよい。期限が来たら自動で出てくる
+```
+
+**対応が終わったら押すのはボタン1つ。** 最終接触日時・次回追客日・優先度・追客履歴はすべて自動更新される。
+次回いつ追客するかを営業担当が考えることはない。
+
+### 自動追客ルール
+
+ステータスごとに「何日後に何をするか」を並べたルールで、次回アクションが自動で決まる。
+
+| ステータス | 追客リズム |
+|-----------|-----------|
+| 新規反響 | すぐ電話 → 2時間後LINE → 翌日電話 → 3日で「返信なし」へ |
+| 物件提案中 | 2日後LINE → 5日後LINE → 10日後電話 |
+| 見積書待ち | 24時間後LINE → 48時間後LINE → 72時間後に**営業担当へ通知** |
+| 内見済 | 当日に感想確認 → 2日後LINE → 5日後電話 |
+| 返信なし | 1日 → 3日 → 7日（電話）→ 14日 → **30日で休眠へ自動遷移** |
+| 休眠 | 通算60日・90日で掘り起こしLINE（失注にはしない） |
+
+各ステータスの最終段は自動遷移になっているため、**どのステータスからも追客が途切れない。**
+ルールは `/settings/followup` から会社の営業スタイルに合わせて変更できる。
+
+### そのほか
+
+- **優先度の自動判定**（S 今すぐ / A 今日 / B 通常 / C 自動追客）— ステータス・期限超過・引越し時期・未返信状態から計算
+- **LINEテンプレート** — 状況に合った候補文が出る。顧客名・エリア・家賃は差し込み済み
+- **追客履歴** — ボタン操作とシステム処理から自動で積み上がる（手入力なし）
+- **管理者ダッシュボード** — 期限超過・滞留状況と、担当者別の反響/追客/内見/申込/成約/成約率
+- **顧客登録** — 必須入力は名前だけ。登録した瞬間に追客が始まる
 
 ---
 
@@ -44,7 +115,7 @@
 
 ---
 
-## 実装した機能
+## 公式LINE 未返信リマインドの機能
 
 ### 未返信の検知【仕様①】
 - 「顧客の最新メッセージ > 担当者の最新返信」で未返信と判定
@@ -99,7 +170,7 @@
 |---|---|
 | コード | [`gas/入金自動記入.gs`](gas/入金自動記入.gs) |
 | 導入手順 | [`gas/README.md`](gas/README.md) |
-| 方式の比較・費用・セキュリティ | [`docs/10`](docs/10-bank-deposit-sync.md) |
+| 方式の比較・費用・セキュリティ | [`docs/13`](docs/13-bank-deposit-sync.md) |
 
 **Next.js アプリ側には何も足していない。** 既に社内で稼働している
 「振込自動記入（出金版）」が Apps Script なので、同じ流儀にそろえてある。
@@ -134,10 +205,10 @@ freee 側で口座連携が切れると **エラーは出ないのに明細だ�
 |----|------|
 | アプリ | Next.js 15（App Router） / TypeScript / Tailwind CSS |
 | DB | PostgreSQL（Supabase / Neon）+ Prisma |
-| 定期実行 | Netlify Scheduled Functions（既定）/ Vercel Cron / GitHub Actions（要手動有効化）|
+| 定期実行 | Netlify Scheduled Functions（既定）/ Vercel Cron / GitHub Actions（要手動有効化）<br>未返信リマインド 5分ごと ／ 追客 1時間ごと |
 | 社内通知 | **Slack Incoming Webhook（採用）** ／ Discord・LINE WORKS・Google Chat ／ LINE push（グループ・個人）も選択可 |
 | 認証 | scrypt + HMAC署名付き HttpOnly Cookie（外部依存なし） |
-| テスト | Vitest（77ケース）＋ 実DB結合確認スクリプト（10シナリオ）。GitHub Actions で自動実行 |
+| テスト | Vitest（230ケース）＋ 実DB結合確認スクリプト（未返信10シナリオ / 追客40項目）。GitHub Actions で自動実行 |
 
 **月額運用コスト：¥0（Netlify + Supabase 無料枠 + Slack通知）〜 約¥5,000**
 社内通知を Slack にしたことで、社内リマインド分（想定1,500通/月）の LINE 通数はゼロ。
@@ -159,16 +230,20 @@ cp .env.example .env
 
 # 3. データベース
 npx prisma migrate deploy   # 本番デプロイ時は build:deploy が自動実行するため不要
-npm run seed                # 設定・エスカレーション・祝日・管理者ユーザー（初回のみ）
+npm run seed                # 設定・エスカレーション・祝日・追客ルール・LINEテンプレート・管理者（初回のみ）
 
-# 4. 起動
+# 4. 動作確認用のデモ顧客（本番では実行しない）
+npm run seed:demo
+
+# 5. 起動
 npm run dev         # http://localhost:3000
 ```
 
-LINE Developers の Webhook URL に `https://<host>/api/line/webhook` を設定し、
+追客管理は LINE 連携なしでも動く（電話・ポータル経由の反響を手で登録できる）。
+LINE 連携を行う場合は、LINE Developers の Webhook URL に `https://<host>/api/line/webhook` を設定し、
 **「Webhookの利用」をオン・「応答メッセージ」をオフ**にする。
 
-詳細手順 → [docs/06](docs/06-operations.md)
+起動後の操作方法 → [docs/12](docs/12-followup-operations.md) ／ LINE設定の詳細手順 → [docs/06](docs/06-operations.md)
 
 ## 動作確認
 
@@ -179,10 +254,13 @@ PostgreSQL のサービスコンテナを立てて結合確認まで流すため
 手元で実行する場合:
 
 ```bash
-npm test                                          # 判定ロジック 77ケース
-npm run typecheck                                 # 型チェック
-npm run build                                     # 本番ビルド（DB不要）
-DATABASE_URL=postgresql://... npx tsx scripts/e2e-check.ts   # 実DBでの結合確認 10シナリオ
+npm test                # 判定ロジック 230ケース
+npm run typecheck       # 型チェック
+npm run build           # 本番ビルド（DB不要）
+
+DATABASE_URL=postgresql://... npm run check:followup   # 実DBでの追客の結合確認 40項目
+DATABASE_URL=postgresql://... npm run check:reminder   # 実DBでの未返信リマインドの結合確認 10シナリオ
+DATABASE_URL=postgresql://... npm run followups:run    # 追客の定期実行を手元で1回だけ走らせる
 ```
 
 ## ディレクトリ構成
@@ -191,28 +269,44 @@ DATABASE_URL=postgresql://... npx tsx scripts/e2e-check.ts   # 実DBでの結合
 src/
 ├── app/
 │   ├── api/
-│   │   ├── line/webhook/     LINE Webhook（署名検証・冪等化・未返信化）
-│   │   ├── cron/reminders/   定期実行（確保 → 判定 → 通知）
-│   │   ├── ingest/outbound/  外部連携からの返信取り込み
-│   │   ├── health/           死活監視
+│   │   ├── customers/        顧客登録・更新・追客アクション記録・LINE返信
+│   │   ├── cron/followups/   追客の定期実行（自動遷移・通知・優先度）
+│   │   ├── cron/reminders/   未返信リマインドの定期実行
+│   │   ├── line/webhook/     LINE Webhook（署名検証・冪等化・未返信化・追客の自動判定）
+│   │   ├── templates/        LINEテンプレート
+│   │   ├── followup-rules/   自動追客ルール
 │   │   └── ...               管理API
-│   ├── page.tsx              ダッシュボード
-│   ├── customers/            未返信一覧・顧客詳細
-│   └── settings/             設定
+│   ├── page.tsx              ★ 今日やること（トップ画面）
+│   ├── customers/            顧客一覧・顧客詳細・顧客登録
+│   ├── admin/                管理者ダッシュボード
+│   ├── reminders/            未返信リマインドのダッシュボード・未返信一覧
+│   └── settings/             設定・追客ルール・LINEテンプレート
 ├── lib/
 │   ├── domain/               ★ 副作用なしの判定ロジック（テスト対象）
+│   │   ├── followUp.ts         次回アクション・優先度・今日やることの仕分け
+│   │   ├── messageTemplate.ts  LINE文章の差し込みと候補選択
 │   │   ├── businessHours.ts    営業時間・休日・繰り延べ
 │   │   ├── reminderSchedule.ts 次回通知時刻の決定
 │   │   ├── escalation.ts       段階判定・通知先解決
 │   │   ├── notificationText.ts 通知本文
 │   │   └── dedupe.ts           冪等キー
 │   ├── services/             DBトランザクション・通知送信
+│   │   ├── followUp.ts         追客の状態遷移（ボタン操作・LINE連動）
+│   │   ├── followUpRunner.ts   追客Cronの本体
+│   │   ├── followUpDefaults.ts 追客ルール・テンプレートの初期値
+│   │   ├── todayList.ts        今日やることの組み立て
+│   │   └── salesStats.ts       管理者向けの集計
 │   ├── line/                 Messaging API クライアント・署名検証
 │   ├── notify/               通知チャネルのディスパッチ（Slack / Discord / LINE WORKS / LINE）
 │   └── auth/                 セッション・パスワード
 ├── components/               画面コンポーネント
+│   └── followup/               今日やること・アクションボタン・顧客登録・設定
 prisma/                       スキーマ・マイグレーション・seed
 tests/                        ユニットテスト
-scripts/e2e-check.ts          実DB結合確認
+scripts/
+├── e2e-check.ts              未返信リマインドの実DB結合確認
+├── followup-check.ts         追客管理の実DB結合確認
+├── demo-seed.ts              動作確認用のデモ顧客
+└── run-followups.ts          追客Cronを手元で1回実行
 docs/                         設計ドキュメント
 ```

@@ -1,18 +1,40 @@
-import { HandlingStatus, type Prisma, ReplyState } from '@prisma/client'
+import { CustomerStatus, type Prisma } from '@prisma/client'
 import Link from 'next/link'
 
 import { AppShell } from '@/components/AppShell'
-import { AutoRefresh } from '@/components/AutoRefresh'
-import { CustomerFilters } from '@/components/CustomerFilters'
-import { ElapsedBadge, StatusBadge, formatDateTimeJa } from '@/components/ui'
+import { CustomerListFilters } from '@/components/followup/CustomerListFilters'
+import { ActionBadge, CustomerStatusBadge, PriorityBadge, formatDateTimeJa } from '@/components/ui'
 import { requirePageSession } from '@/lib/auth/guard'
-import { diffMinutes } from '@/lib/domain/time'
-import { prisma } from '@/lib/prisma'
+import { TERMINAL_STATUSES } from '@/lib/domain/followUp'
+import { endOfDayIn, startOfDayIn } from '@/lib/domain/time'
+import { prisma, withReadRetry } from '@/lib/prisma'
 import { getSettings } from '@/lib/services/settings'
 
 export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 50
+
+/** 一覧の「表示」切り替え。管理者が見たい切り口をそのままボタンにしている */
+function whereForView(view: string | undefined, startOfToday: Date, endOfToday: Date): Prisma.CustomerWhereInput {
+  switch (view) {
+    case 'overdue':
+      return { status: { notIn: TERMINAL_STATUSES }, nextActionAt: { lt: startOfToday } }
+    case 'today':
+      return { status: { notIn: TERMINAL_STATUSES }, nextActionAt: { gte: startOfToday, lte: endOfToday } }
+    case 'no_reply':
+      return { status: CustomerStatus.NO_REPLY }
+    case 'dormant':
+      return { status: CustomerStatus.DORMANT }
+    case 'contracted':
+      return { status: CustomerStatus.CONTRACTED }
+    case 'lost':
+      return { status: CustomerStatus.LOST }
+    case 'all':
+      return {}
+    default:
+      return { status: { notIn: TERMINAL_STATUSES } }
+  }
+}
 
 export default async function CustomersPage({
   searchParams,
@@ -23,119 +45,129 @@ export default async function CustomersPage({
   const params = await searchParams
   const settings = await getSettings()
   const now = new Date()
+  const startOfToday = startOfDayIn(settings.timezone, now)
+  const endOfToday = endOfDayIn(settings.timezone, now)
 
-  const status = params.status as HandlingStatus | undefined
+  const status = params.status as CustomerStatus | undefined
   const assigneeId = params.assignee
-  const onlyAwaiting = params.awaiting !== '0'
   const q = params.q?.trim()
   const page = Math.max(1, Number(params.page ?? 1) || 1)
 
-  const where: Prisma.ConversationWhereInput = {
-    ...(onlyAwaiting ? { replyState: ReplyState.AWAITING } : {}),
-    ...(status ? { handlingStatus: status } : {}),
-    ...(assigneeId ? { customer: { assigneeId: assigneeId === 'none' ? null : assigneeId } } : {}),
+  const where: Prisma.CustomerWhereInput = {
+    ...whereForView(params.view, startOfToday, endOfToday),
+    ...(status ? { status } : {}),
+    ...(assigneeId ? { assigneeId: assigneeId === 'none' ? null : assigneeId } : {}),
     ...(q
       ? {
-          customer: {
-            OR: [
-              { name: { contains: q, mode: 'insensitive' } },
-              { displayName: { contains: q, mode: 'insensitive' } },
-              { lineUserId: { contains: q } },
-            ],
-          },
+          OR: [
+            { name: { contains: q, mode: 'insensitive' } },
+            { displayName: { contains: q, mode: 'insensitive' } },
+            { phone: { contains: q } },
+          ],
         }
       : {}),
   }
 
-  const [rows, total, staff] = await Promise.all([
-    prisma.conversation.findMany({
-      where,
-      include: { customer: { include: { assignee: true } } },
-      orderBy: [{ firstUnrepliedAt: 'asc' }, { updatedAt: 'desc' }],
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-    }),
-    prisma.conversation.count({ where }),
-    prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-  ])
+  const [rows, total, staff] = await withReadRetry(() =>
+
+    Promise.all([
+      prisma.customer.findMany({
+        where,
+        include: { assignee: { select: { name: true } } },
+        // 期限が近い顧客ほど上。未設定（＝要判断）は最後に回す
+        orderBy: [{ nextActionAt: { sort: 'asc', nulls: 'last' } }],
+        skip: (page - 1) * PAGE_SIZE,
+        take: PAGE_SIZE,
+      }),
+      prisma.customer.count({ where }),
+      prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+
+    ]),
+
+  )
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
     <AppShell>
-      <AutoRefresh seconds={60} />
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-bold">未返信一覧</h1>
-        <span className="text-sm text-slate-500">{total}件</span>
+        <h1 className="text-xl font-bold">
+          顧客一覧 <span className="ml-2 text-sm font-normal text-slate-500">{total}件</span>
+        </h1>
+        <Link href="/customers/new" className="btn-primary px-3 py-1.5 text-sm">
+          ＋ 顧客登録
+        </Link>
       </div>
 
-      <CustomerFilters staff={staff.map((s) => ({ id: s.id, name: s.name }))} />
+      <CustomerListFilters staff={staff.map((s) => ({ id: s.id, name: s.name }))} />
 
       <div className="card mt-4 overflow-x-auto">
-        <table className="w-full min-w-[1100px] text-sm">
+        <table className="w-full min-w-[1000px] text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs text-slate-600">
+              <th className="px-3 py-2">優先</th>
               <th className="px-3 py-2">顧客名</th>
-              <th className="px-3 py-2">LINEユーザーID</th>
-              <th className="px-3 py-2">担当者</th>
-              <th className="px-3 py-2">最終顧客メッセージ</th>
-              <th className="px-3 py-2">受信日時</th>
-              <th className="px-3 py-2">未返信経過</th>
-              <th className="px-3 py-2">リマインド</th>
-              <th className="px-3 py-2">対応状況</th>
-              <th className="px-3 py-2">対応済み日時</th>
+              <th className="px-3 py-2">ステータス</th>
+              <th className="px-3 py-2">担当</th>
+              <th className="px-3 py-2">希望エリア / 家賃</th>
+              <th className="px-3 py-2">最終接触</th>
+              <th className="px-3 py-2">次回アクション</th>
+              <th className="px-3 py-2">内容</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-10 text-center text-slate-500">
+                <td colSpan={8} className="px-3 py-10 text-center text-slate-500">
                   該当する顧客はいません
                 </td>
               </tr>
             ) : (
-              rows.map((c) => (
-                <tr key={c.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                  <td className="px-3 py-2">
-                    <Link href={`/customers/${c.customerId}`} className="font-medium hover:underline">
-                      {c.customer.name ?? c.customer.displayName ?? '（名称未取得）'}
-                    </Link>
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs text-slate-500">{c.customer.lineUserId}</td>
-                  <td className="px-3 py-2 text-slate-700">
-                    {c.customer.assignee?.name ?? <span className="text-orange-600">未設定</span>}
-                  </td>
-                  <td className="max-w-[280px] truncate px-3 py-2 text-slate-700" title={c.lastInboundText ?? ''}>
-                    {c.lastInboundText ?? '—'}
-                  </td>
-                  <td className="px-3 py-2 text-xs text-slate-500">
-                    {formatDateTimeJa(c.lastInboundAt, settings.timezone)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <ElapsedBadge
-                      minutes={
-                        c.replyState === ReplyState.AWAITING && c.firstUnrepliedAt
-                          ? diffMinutes(now, c.firstUnrepliedAt)
-                          : null
-                      }
-                    />
-                  </td>
-                  <td className="px-3 py-2 tabular-nums text-slate-600">{c.reminderCount}回</td>
-                  <td className="px-3 py-2">
-                    <StatusBadge status={c.handlingStatus} />
-                  </td>
-                  <td className="px-3 py-2 text-xs text-slate-500">
-                    {formatDateTimeJa(c.resolvedAt, settings.timezone)}
-                  </td>
-                </tr>
-              ))
+              rows.map((c) => {
+                const overdue = c.nextActionAt !== null && c.nextActionAt.getTime() < startOfToday.getTime()
+                return (
+                  <tr key={c.id} className={`border-b border-slate-100 last:border-0 hover:bg-slate-50 ${overdue ? 'bg-red-50' : ''}`}>
+                    <td className="px-3 py-2">
+                      <PriorityBadge priority={c.priority} />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Link href={`/customers/${c.id}`} className="font-medium hover:underline">
+                        {c.name ?? c.displayName ?? '（名称未登録）'}
+                      </Link>
+                      {c.phone ? <div className="text-xs text-slate-500">{c.phone}</div> : null}
+                    </td>
+                    <td className="px-3 py-2">
+                      <CustomerStatusBadge status={c.status} />
+                    </td>
+                    <td className="px-3 py-2 text-slate-700">
+                      {c.assignee?.name ?? <span className="text-orange-600">未設定</span>}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-600">
+                      {c.desiredArea ?? '—'}
+                      {c.desiredRent ? ` / ${c.desiredRent.toLocaleString('ja-JP')}円` : ''}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-500">
+                      {formatDateTimeJa(c.lastContactAt, settings.timezone)}
+                    </td>
+                    <td className={`px-3 py-2 text-xs ${overdue ? 'font-bold text-red-700' : 'text-slate-700'}`}>
+                      {c.nextActionAt ? formatDateTimeJa(c.nextActionAt, settings.timezone) : '要判断'}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <ActionBadge type={c.nextActionType} />
+                        <span className="text-xs text-slate-600">{c.nextActionNote ?? ''}</span>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })
             )}
           </tbody>
         </table>
       </div>
 
       {totalPages > 1 ? (
-        <div className="mt-4 flex justify-center gap-2 text-sm">
+        <div className="mt-4 flex flex-wrap justify-center gap-2 text-sm">
           {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => {
             const sp = new URLSearchParams(params as Record<string, string>)
             sp.set('page', String(p))
@@ -143,7 +175,7 @@ export default async function CustomersPage({
               <Link
                 key={p}
                 href={`/customers?${sp.toString()}`}
-                className={`rounded px-3 py-1 ${p === page ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
+                className={`rounded px-3 py-1 ${p === page ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600'}`}
               >
                 {p}
               </Link>

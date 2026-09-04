@@ -18,7 +18,7 @@ import { loadPolicyContext } from '../src/lib/services/context'
 import { recordInboundMessage, recordOutboundMessage } from '../src/lib/services/conversation'
 import { runReminderJob } from '../src/lib/services/reminderRunner'
 import { applyQuickAction } from '../src/lib/services/quickAction'
-import { buildResolveActionData } from '../src/lib/line/quickAction'
+import { buildAssignActionData, buildResolveActionData } from '../src/lib/line/quickAction'
 
 // このスクリプトは DATABASE_URL だけで動くようにする。
 // ボタンの署名鍵は本番と同じ経路（env.quickActionSecret）で参照されるため、未設定なら検証用の値を入れる。
@@ -126,8 +126,10 @@ async function main(): Promise<void> {
 
     s = await runReminderJob(new Date(T0.getTime() + 60 * MIN))
     check('60分時点で1通送られる', s.sent === 1, s)
-    check('通知本文が依頼書式になっている', received[0]?.includes('公式LINE未返信リマインド') === true)
-    check('未返信時間が表示される', received[0]?.includes('未返信時間：1時間') === true, received[0])
+    check('通知本文が経過時間から始まる', received[0]?.includes('⚠️ 未返信 1時間') === true, received[0])
+    check('通知本文に顧客と担当者が並ぶ', received[0]?.includes('（担当：') === true)
+    check('通知本文に操作の案内がある', received[0]?.includes('返信したら下のボタンをタップしてください。') === true)
+    check('顧客名と本文が載る', received[0]?.includes('『〇〇について聞きたいです』') === true, received[0])
 
     s = await runReminderJob(new Date(T0.getTime() + 120 * MIN))
     check('120分時点で2通目が送られる', s.sent === 1 && received.length === 2, { s, count: received.length })
@@ -200,9 +202,10 @@ async function main(): Promise<void> {
     check('連投中でも通知が出る', guardSent > 0, { guardSent })
     const guardReminder = await prisma.reminder.findFirst({ where: { kind: 'GUARD' } })
     check('保険（GUARD）として記録される', guardReminder !== null)
+    // 連投中は最新メッセージ基準だと数字が小さくなり軽く見える。実際の放置時間を出す
     check(
-      '最初の未返信からの実経過が併記される',
-      received.some((r) => r.includes('最初の未返信から')),
+      '連投中でも実際の放置時間が出る',
+      received.some((r) => r.includes('未返信 3時間（メッセージ連投中）')),
       received[0],
     )
 
@@ -379,6 +382,273 @@ async function main(): Promise<void> {
     )
     check('社外の人は顧客として登録される', (await prisma.customer.count({ where: { lineUserId: 'Uoutside-customer' } })) === 1)
     check('未返信として追跡される', (await prisma.conversation.count({ where: { replyState: ReplyState.AWAITING } })) === 1)
+
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑬ 担当者のLINE連携コード（社内通知チャネル）')
+    await reset()
+    const { issueLinkCode, consumeLinkCode } = await import('../src/lib/services/staffLink')
+    const { hashLinkCode } = await import('../src/lib/domain/linkCode')
+    const target = await prisma.staff.create({ data: { name: '営業担当B', email: 'link@example.test' } })
+
+    const issued = await issueLinkCode(target.id, T0)
+    check('平文コードはDBに保存されない', (await prisma.staffLinkCode.count({ where: { codeHash: issued.code } })) === 0)
+    check('ハッシュで保存される', (await prisma.staffLinkCode.count({ where: { codeHash: hashLinkCode(issued.code) } })) === 1)
+
+    const wrong = await consumeLinkCode('ZZZZ9999', 'Ustaff-B', T0)
+    check('存在しないコードは紐づかない', wrong.status === 'NOT_FOUND', wrong.status)
+
+    const chat = await consumeLinkCode('おつかれさまです', 'Ustaff-B', T0)
+    check('コードを含まない発言には反応しない', chat.status === 'NO_CODE', chat.status)
+
+    const linked = await consumeLinkCode(`登録 ${issued.code}`, 'Ustaff-B', T0)
+    check('本文にコードが混ざっていても紐づく', linked.status === 'LINKED', linked)
+    check(
+      'LINEユーザーIDが担当者に登録される',
+      (await prisma.staff.findUniqueOrThrow({ where: { id: target.id } })).lineUserId === 'Ustaff-B',
+    )
+
+    const reused = await consumeLinkCode(issued.code, 'Uattacker', T0)
+    check('使用済みコードは再利用できない', reused.status === 'ALREADY_USED', reused.status)
+    check(
+      '再利用が拒否されても登録は書き換わらない',
+      (await prisma.staff.findUniqueOrThrow({ where: { id: target.id } })).lineUserId === 'Ustaff-B',
+    )
+
+    const expiredIssue = await issueLinkCode(target.id, new Date(T0.getTime() - 48 * 60 * MIN))
+    const expired = await consumeLinkCode(expiredIssue.code, 'Ustaff-B', T0)
+    check('期限切れコードは紐づかない', expired.status === 'EXPIRED', expired.status)
+
+    // 別の担当者が、既に他人が使っているLINEアカウントで登録しようとした場合
+    const other = await prisma.staff.create({ data: { name: '営業担当C', email: 'link2@example.test' } })
+    const otherIssue = await issueLinkCode(other.id, T0)
+    const conflict = await consumeLinkCode(otherIssue.code, 'Ustaff-B', T0)
+    check('他人に紐づけ済みのLINEアカウントは奪えない', conflict.status === 'ALREADY_LINKED_TO_OTHER', conflict.status)
+    check(
+      '奪われずに元の担当者のままになる',
+      (await prisma.staff.findUniqueOrThrow({ where: { id: target.id } })).lineUserId === 'Ustaff-B',
+    )
+
+    // 発行し直すと前のコードは無効になる
+    const first = await issueLinkCode(other.id, T0)
+    const second = await issueLinkCode(other.id, T0)
+    const staleCode = await consumeLinkCode(first.code, 'Ustaff-C', T0)
+    check('再発行すると前のコードは無効になる', staleCode.status === 'NOT_FOUND', staleCode.status)
+    const fresh = await consumeLinkCode(second.code, 'Ustaff-C', T0)
+    check('最後に発行したコードで紐づく', fresh.status === 'LINKED', fresh.status)
+
+    // 社内通知チャネルに来たメッセージを顧客として扱わない
+    await processLineEvents(
+      [
+        {
+          type: 'message',
+          timestamp: T0.getTime(),
+          source: { type: 'user', userId: 'Uunknown-internal' },
+          webhookEventId: 'evt-notify-1',
+          message: { id: 'msg-notify', type: 'text', text: 'これは社内チャネルへの発言' },
+        },
+      ],
+      'NOTIFY',
+      await loadPolicyContext(T0),
+      T0.getTime(),
+    )
+    check('社内通知チャネルの発言は顧客にならない', (await prisma.customer.count()) === 0)
+    check('社内通知チャネルの発言で会話が作られない', (await prisma.conversation.count()) === 0)
+
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑭ 担当者だけでなく社内全員に同報される（事務も返信するため）')
+    await reset()
+    const salesA = await prisma.staff.create({
+      data: { name: '営業A', email: 'sales-a@example.test', lineUserId: 'Usales-a' },
+    })
+    // 社内共通の通知先として「全員」を個別に登録する（LINEグループが使えない構成）
+    for (const [name, target] of [['営業A', 'Usales-a'], ['営業B', 'Usales-b'], ['事務', 'Ujimu']] as const) {
+      await prisma.notificationChannel.create({
+        data: { name, type: ChannelType.LINE_USER, target, purpose: ChannelPurpose.DEFAULT_GROUP },
+      })
+    }
+    const shared = await inbound('Ucustomer9', '内見の予約をしたいです', T0, 'msg-9a')
+    await prisma.customer.update({
+      where: { lineUserId: 'Ucustomer9' },
+      data: { assigneeId: salesA.id },
+    })
+    const { rescheduleConversation: reschedule9 } = await import('../src/lib/services/conversation')
+    await reschedule9(shared.conversationId, await loadPolicyContext(T0))
+    await runReminderJob(new Date(T0.getTime() + 61 * MIN))
+
+    const reminder9 = await prisma.reminder.findFirstOrThrow({
+      where: { conversationId: shared.conversationId },
+      orderBy: { createdAt: 'desc' },
+    })
+    const targets9 = (reminder9.targets as { target: string }[]).map((t) => t.target).sort()
+    const lineTargets9 = targets9.filter((t) => t.startsWith('U'))
+    check(
+      '担当者・他の営業・事務の全員に届く',
+      JSON.stringify(lineTargets9) === JSON.stringify(['Ujimu', 'Usales-a', 'Usales-b']),
+      targets9,
+    )
+    check('担当者が共通の通知先にも入っているが二重にならない', targets9.filter((t) => t === 'Usales-a').length === 1)
+
+    // 同報を切ると担当者だけになる
+    await prisma.appSettings.update({ where: { id: 1 }, data: { alwaysNotifyDefaultGroup: false } })
+    await runReminderJob(new Date(T0.getTime() + 121 * MIN))
+    const reminder9b = await prisma.reminder.findFirstOrThrow({
+      where: { conversationId: shared.conversationId },
+      orderBy: { createdAt: 'desc' },
+    })
+    const targets9b = (reminder9b.targets as { target: string }[]).map((t) => t.target)
+    check('設定を切ると担当者だけになる', JSON.stringify(targets9b) === JSON.stringify(['Usales-a']), targets9b)
+    await prisma.appSettings.update({ where: { id: 1 }, data: { alwaysNotifyDefaultGroup: true } })
+
+    // 事務が「対応済み」を押しても止まる（担当者でなくても操作できる）
+    const conv9 = await prisma.conversation.findUniqueOrThrow({ where: { id: shared.conversationId } })
+    const jimu = await prisma.staff.create({
+      data: { name: '事務', email: 'jimu@example.test', lineUserId: 'Ujimu' },
+    })
+    const byJimu = await applyQuickAction(
+      {
+        data: buildResolveActionData(
+          { customerId: conv9.customerId, cycleId: conv9.firstUnrepliedAt!.getTime() },
+          process.env.QUICK_ACTION_SECRET!,
+        )!,
+        source: { type: 'user', userId: jimu.lineUserId! },
+      },
+      await loadPolicyContext(T0),
+    )
+    check('担当者以外（事務）でも対応済みにできる', byJimu.status === 'RESOLVED', byJimu)
+    check(
+      '対応済み後はリマインドが止まる',
+      (await prisma.conversation.findUniqueOrThrow({ where: { id: shared.conversationId } })).nextReminderAt === null,
+    )
+
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑮ 社内LINE通知の「自分が担当にする」ボタン')
+    await reset()
+    await prisma.appSettings.update({ where: { id: 1 }, data: { respectBusinessHours: false } })
+    await prisma.notificationChannel.create({
+      data: { name: '社内LINEグループ', type: ChannelType.LINE_GROUP, target: 'Ginternal', purpose: ChannelPurpose.DEFAULT_GROUP },
+    })
+    const assigner = await prisma.staff.create({
+      data: { name: '割当担当', email: 'assign@example.test', lineUserId: 'Ustaff-assign' },
+    })
+    const qsecret = process.env.QUICK_ACTION_SECRET ?? process.env.SESSION_SECRET!
+
+    await inbound('Ucustomer13', '担当割当の確認です', T0, 'msg-13a')
+    const conv13 = await prisma.conversation.findFirstOrThrow({ where: { customer: { lineUserId: 'Ucustomer13' } } })
+    const assignData = buildAssignActionData(
+      { customerId: conv13.customerId, cycleId: conv13.firstUnrepliedAt!.getTime() },
+      qsecret,
+    )!
+
+    check(
+      '割当前は担当者が未設定',
+      (await prisma.customer.findUniqueOrThrow({ where: { id: conv13.customerId } })).assigneeId === null,
+    )
+
+    // 社内グループから、担当者として登録済みの人がタップする
+    const assigned = await applyQuickAction(
+      { data: assignData, source: { type: 'group', groupId: 'Ginternal', userId: 'Ustaff-assign' } },
+      await loadPolicyContext(T0),
+    )
+    check('グループからのタップで担当者になる', assigned.status === 'ASSIGNED', assigned)
+    check(
+      '顧客の担当者が更新される',
+      (await prisma.customer.findUniqueOrThrow({ where: { id: conv13.customerId } })).assigneeId === assigner.id,
+    )
+
+    // 担当を引き受けただけで、未返信を閉じてはいけない（見逃しに直結する）
+    const conv13b = await prisma.conversation.findUniqueOrThrow({ where: { id: conv13.id } })
+    check('担当割当では未返信のままになる', conv13b.replyState === ReplyState.AWAITING, conv13b.replyState)
+    check('リマインド予定も消えない', conv13b.nextReminderAt !== null, conv13b.nextReminderAt)
+
+    // 未登録アカウントが押しても、誰に割り当てるか決められない
+    const notStaff = await applyQuickAction(
+      { data: assignData, source: { type: 'group', groupId: 'Ginternal', userId: 'Uunknown-person' } },
+      await loadPolicyContext(T0),
+    )
+    check('未登録アカウントのタップは担当者にできない', notStaff.status === 'NOT_STAFF', notStaff.status)
+    check(
+      '担当者は元のまま変わらない',
+      (await prisma.customer.findUniqueOrThrow({ where: { id: conv13.customerId } })).assigneeId === assigner.id,
+    )
+
+    // 社外からのタップは、そもそも受け付けない
+    const outsiderAssign = await applyQuickAction(
+      { data: assignData, source: { type: 'user', userId: 'Uoutsider-assign' } },
+      await loadPolicyContext(T0),
+    )
+    check('社外アカウントの担当割当は拒否される', outsiderAssign.status === 'FORBIDDEN', outsiderAssign.status)
+
+    // 署名の対象に種別が入っているので、担当割当を「対応済み」に化けさせられない
+    const forgedKind = await applyQuickAction(
+      { data: assignData.replace('.A.', '.R.'), source: { type: 'group', groupId: 'Ginternal', userId: 'Ustaff-assign' } },
+      await loadPolicyContext(T0),
+    )
+    check('種別を差し替えたデータは無視される', forgedKind.status === 'INVALID', forgedKind.status)
+    check(
+      '差し替えられても未返信のまま',
+      (await prisma.conversation.findUniqueOrThrow({ where: { id: conv13.id } })).replyState === ReplyState.AWAITING,
+    )
+
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑯ 2回目以降のリマインドを1通にまとめる')
+    await reset()
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: { respectBusinessHours: false, digestRepeatReminders: true },
+    })
+    await prisma.notificationChannel.create({
+      data: { name: '社内LINEグループ', type: ChannelType.WEBHOOK, target: `http://127.0.0.1:${PORT}/hook`, purpose: ChannelPurpose.DEFAULT_GROUP },
+    })
+
+    for (const n of [1, 2, 3]) {
+      await inbound(`Udigest${n}`, `まとめ確認${n}`, T0, `msg-16-${n}`)
+    }
+
+    received.length = 0
+    const digestFirst = await runReminderJob(new Date(T0.getTime() + 60 * MIN))
+    check('初回は3件が個別に送られる', digestFirst.sent === 3, digestFirst)
+    check('初回の通知は3通', received.length === 3, received.length)
+    check('初回にまとめ通知は出ない', !received.some((r) => r.includes('件（継続中）')), received[0])
+
+    received.length = 0
+    const digestSecond = await runReminderJob(new Date(T0.getTime() + 130 * MIN))
+    check('2回目も3件とも送信済みとして処理される', digestSecond.sent === 3, digestSecond)
+    check('2回目は1通にまとまる', received.length === 1, received.length)
+    check('まとめ通知に3件すべて載る', received[0]?.includes('未返信 3件（継続中）') === true, received[0])
+    for (const n of [1, 2, 3]) {
+      check(`まとめ通知に${n}件目が含まれる`, received[0]?.includes(`Udigest${n}`) === true)
+    }
+
+    // まとめても予定と記録は1件ずつ進む＝取りこぼしが起きない
+    const digestConvs = await prisma.conversation.findMany({
+      where: { customer: { lineUserId: { startsWith: 'Udigest' } } },
+    })
+    check('まとめても回数は1件ずつ進む', digestConvs.every((c) => c.reminderCount === 2), digestConvs.map((c) => c.reminderCount))
+    check('まとめても次回予定が入る', digestConvs.every((c) => c.nextReminderAt !== null))
+    check(
+      'まとめても記録は1件ずつ残る',
+      (await prisma.reminder.count({ where: { conversationId: { in: digestConvs.map((c) => c.id) }, sequence: 2 } })) === 3,
+    )
+
+    // 1件だけ返信すると、次のまとめから外れる
+    await recordOutboundMessage(
+      {
+        customerId: digestConvs[0]!.customerId,
+        text: '返信しました',
+        messageType: 'text',
+        sentAt: new Date(T0.getTime() + 140 * MIN),
+        source: 'ADMIN_UI',
+        via: ResolvedVia.ADMIN_REPLY,
+      },
+      await loadPolicyContext(T0),
+    )
+    received.length = 0
+    await runReminderJob(new Date(T0.getTime() + 200 * MIN))
+    check('返信済みはまとめ通知から外れる', received.every((r) => !r.includes(digestConvs[0]!.customerId)), received[0])
 
   } finally {
     server.close()

@@ -4,12 +4,25 @@
 // ===========================================================================
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  /**
+   * ビルドは Linux(Debian) 上で行われるが、Netlify Functions の実行環境は
+   * AWS Lambda(Amazon Linux) である。native だけだと実行時に
+   * 「Query engine binary for current platform could not be found」で落ちるため、
+   * 実行環境用のエンジンも一緒に生成しておく。
+   */
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // アプリ実行時の接続。サーバーレスでは接続数を抑えるためプーラー経由にする
+  url       = env("DATABASE_URL")
+  // マイグレーション実行時の接続。
+  // Supabase の Transaction pooler(6543) は Prisma migrate が使う
+  // アドバイザリロックに対応していないため、別経路を指定できるようにしている。
+  // プーラーを使わない環境では DATABASE_URL と同じ値を入れてよい。
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------------------------------------------------------------------------
@@ -72,7 +85,7 @@ enum ChannelType {
 
 /// 通知チャネルの役割
 enum ChannelPurpose {
-  DEFAULT_GROUP /// 担当者未設定時の社内共通グループ
+  DEFAULT_GROUP /// 社内共通の通知先。担当者未設定時の受け皿であり、同報先でもある
   ADMIN /// 管理者向け（エスカレーション最終段・watchdog）
   FALLBACK /// 主経路が連続失敗したときの代替
 }
@@ -111,9 +124,31 @@ model Staff {
   customers    Customer[]
   sentMessages Message[]
   users        User[]
+  linkCodes    StaffLinkCode[]
+  followUpLogs FollowUpLog[]
 
   @@index([active])
   @@map("staff")
+}
+
+/// 担当者のLINEユーザーIDを本人操作で紐づけるための使い捨てコード。
+/// 33文字のユーザーIDを手で書き写すと打ち間違いが起きるため、
+/// 「管理画面で発行 → 本人が社内通知Botへ送信」で自動的に紐づける。
+model StaffLinkCode {
+  id               String    @id @default(cuid())
+  staffId          String
+  staff            Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  /// 平文は保存しない。照合はハッシュの完全一致で行う
+  codeHash         String    @unique
+  expiresAt        DateTime
+  usedAt           DateTime?
+  /// 誰が使ったか（監査用）
+  usedByLineUserId String?
+  createdAt        DateTime  @default(now())
+
+  @@index([staffId])
+  @@index([expiresAt])
+  @@map("staff_link_codes")
 }
 
 /// 管理画面ログインユーザー
@@ -138,8 +173,9 @@ model User {
 /// 顧客（LINEユーザー）
 model Customer {
   id                      String   @id @default(cuid())
-  /// LINE の userId（U から始まる33文字）
-  lineUserId              String   @unique
+  /// LINE の userId（U から始まる33文字）。
+  /// 電話・ポータル経由の反響は LINE 未連携のまま登録できるため null を許容する
+  lineUserId              String?  @unique
   /// LINE プロフィール上の表示名
   displayName             String?
   /// 管理画面で編集できる顧客名（優先して表示される）
@@ -156,12 +192,64 @@ model Customer {
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
+  // --- 追客管理 -----------------------------------------------------------
+  phone         String?
+  email         String?
+  /// 問い合わせ日時
+  inquiredAt    DateTime?
+  /// 問い合わせ経路（SUUMO / HOME'S / 自社HP / 電話 / 紹介 など）
+  inquirySource String?
+  /// 希望エリア
+  desiredArea   String?
+  /// 希望家賃（円 / 月）
+  desiredRent   Int?
+  /// 引越し希望時期（表示用の自由記述。例：9月中旬）
+  moveInTiming  String?
+  /// 引越し希望日。優先度の自動判定に使う（時期が近いほど優先）
+  moveInBy      DateTime?
+  /// 希望条件（間取り・設備など自由記述）
+  requirements  String?
+
+  status           CustomerStatus    @default(NEW_INQUIRY)
+  /// 現在のステータスになった時刻。自動追客ルールの起点
+  statusSince      DateTime          @default(now())
+  /// 自動判定した追客優先度
+  priority         FollowUpPriority  @default(B)
+  /// 手動で固定した優先度。設定されていれば自動判定より優先する
+  priorityOverride FollowUpPriority?
+
+  /// 最終接触日時（こちらから接触した、または顧客から連絡があった時刻）
+  lastContactAt     DateTime?
+  /// 次回アクション日時。追客管理の中心【指示書 6】
+  nextActionAt      DateTime?
+  /// 次回アクションの種類
+  nextActionType    ActionType?
+  /// 次回アクションの内容（画面にそのまま出る文言）
+  nextActionNote    String?
+  /// 現在のステータス内で消化した追客ステップ番号
+  followUpStep      Int         @default(0)
+  /// 自動追客の対象にする。false にすると次回アクションを自動設定しない
+  autoFollowEnabled Boolean     @default(true)
+
+  contractedAt   DateTime?
+  /// 成約金額（円）
+  contractAmount Int?
+  lostAt         DateTime?
+  lostReason     String?
+  /// 後から項目を追加できるようにするための自由項目
+  customFields   Json?
+
   conversation Conversation?
   messages     Message[]
   reminders    Reminder[]
+  followUpLogs FollowUpLog[]
 
   @@index([assigneeId])
   @@index([blocked])
+  @@index([status])
+  @@index([nextActionAt])
+  @@index([assigneeId, nextActionAt])
+  @@index([priority, nextActionAt])
   @@map("customers")
 }
 
@@ -310,6 +398,19 @@ model AppSettings {
   /// 配信予定を過ぎてこの分数以上滞留したら異常とみなし要確認＋管理者通知
   watchdogDelayMinutes   Int @default(20)
 
+  /// 担当者が設定されていても、社内共通の通知先へ必ず同報する。
+  /// 担当者以外（事務など）が返信することがあるため、既定で有効。
+  alwaysNotifyDefaultGroup Boolean @default(true)
+
+  /// 2回目以降のリマインドを1通にまとめて送る。
+  /// 問い合わせが多いと1件1通では社内LINEが埋まり、かえって見落とすため。
+  /// 初回とエスカレーションは、ボタン付きの個別通知のまま。
+  digestRepeatReminders Boolean @default(true)
+
+  /// リマインド本文のテンプレート。空なら既定の文面を使う。
+  /// {顧客名} {担当者} {経過時間} などを差し込める。
+  notificationTemplate String?
+
   /// 通知本文に顧客メッセージを含めるか
   includeMessageBodyInNotification Boolean @default(true)
   /// 通知本文に載せるメッセージの最大文字数
@@ -408,6 +509,32 @@ model AuditLog {
 }
 
 /// Cron の死活記録（外部監視から参照する）
+/// Webhook 受け口に届いたリクエストの受信記録。
+///
+/// 「入口が詰まっていることに気づけない」のが、このシステムで一番怖い壊れ方。
+/// Lステップの転送が止まっても、設定を間違えても、外形上はただ静かになるだけで
+/// 未返信の検知が丸ごと止まる。ホスティング事業者のログを掘らないと分からない、
+/// という状態にはしない。管理画面から直接見えるところに残す。
+///
+/// 本文は保存しない。届いたかどうかと、なぜ弾いたか（または何件取り出せたか）だけを持つ。
+model RelayReceipt {
+  id         String   @id @default(cuid())
+  receivedAt DateTime @default(now())
+  /// 受け口の種類。'RELAY'（Lステップ転送） / 'WEBHOOK'（LINEから直接）
+  endpoint   String
+  /// 受理できたか
+  accepted   Boolean
+  /// 受理の経路（LINE_SIGNATURE / RELAY_TOKEN）または拒否理由（BAD_TOKEN 等）
+  detail     String
+  /// 取り出せたイベント数。受理できなかった場合は 0
+  eventCount Int      @default(0)
+  /// 届いたJSONの「形」だけ（値は含まない）。転送形式が想定外だったときの手がかり
+  shape      String?
+
+  @@index([receivedAt])
+  @@map("relay_receipts")
+}
+
 model CronRun {
   id         String    @id @default(cuid())
   job        String
@@ -421,4 +548,136 @@ model CronRun {
 
   @@index([job, startedAt])
   @@map("cron_runs")
+}
+
+// ===========================================================================
+//  追客管理（自動追客システム）
+//  「営業マンが顧客管理をする」のではなく「システムが追客を管理し、
+//   営業マンには今日やるべき営業だけを提示する」ためのモデル群。
+//  設計意図の詳細は docs/10-followup-design.md を参照
+// ===========================================================================
+
+/// 顧客の営業進捗ステータス。
+/// 営業マンに細かく入力させず、行動・経過時間・顧客の反応から極力自動で遷移させる。
+enum CustomerStatus {
+  NEW_INQUIRY /// 新規反響
+  FIRST_CONTACTED /// 初回対応済
+  HEARING_DONE /// ヒアリング済
+  PROPOSING /// 物件提案中
+  AWAITING_QUOTE /// 見積書待ち
+  VIEWING_ARRANGING /// 内見調整中
+  VIEWED /// 内見済
+  APPLICATION_REVIEW /// 申込検討
+  APPLIED /// 申込済
+  CONTRACTED /// 成約
+  ON_HOLD /// 保留
+  NO_REPLY /// 返信なし
+  LOST /// 失注
+  DORMANT /// 休眠
+}
+
+/// 追客優先度。S=今すぐ / A=今日 / B=通常 / C=自動追客
+enum FollowUpPriority {
+  S
+  A
+  B
+  C
+}
+
+/// 次回アクションの種類。営業マンの「大きなボタン」と1対1に対応する
+enum ActionType {
+  LINE /// LINEする
+  CALL /// 電話する
+  PROPOSE /// 物件を提案
+  VIEWING /// 内見設定
+  QUOTE /// 見積書を依頼
+  MEETING /// 来店・面談
+  SYSTEM /// システム処理（休眠化などの自動遷移。営業マンには出さない）
+  OTHER /// その他
+}
+
+/// 追客履歴をどの経路で記録したか
+enum FollowUpSource {
+  MANUAL /// 営業マンが画面で記録した
+  ADMIN_REPLY /// 管理画面からLINE送信した
+  AUTO /// 自動追客ルールによるシステム処理
+  LINE_INBOUND /// 顧客からのLINE受信
+  LINE_OUTBOUND /// 顧客へのLINE送信（外部経路の取り込み含む）
+}
+
+/// 自動追客ルール。ステータスごとに「何日後に何をするか」を順番に並べたもの。
+/// 次回アクションは (ステータス開始時刻 + offsetMinutes) で決まるため、
+/// 営業マンが次回追客日を手入力する必要がない。【指示書 6・10】
+model FollowUpRule {
+  id            String          @id @default(cuid())
+  status        CustomerStatus
+  /// 同一ステータス内での順番（0始まり）
+  step          Int
+  /// ステータス開始（statusSince）からの経過分数
+  offsetMinutes Int
+  actionType    ActionType
+  /// 次回アクション内容として画面に出す文言
+  label         String
+  /// 使用するLINEテンプレートのキー（MessageTemplate.key）
+  templateKey   String?
+  /// この段階に到達したら営業マンへ社内通知する（例：見積書待ち72時間）
+  notifyStaff   Boolean         @default(false)
+  /// この段階に到達したら自動でこのステータスへ遷移させる（例：返信なし30日 → 休眠）
+  transitionTo  CustomerStatus?
+  enabled       Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@unique([status, step])
+  @@index([status, enabled])
+  @@map("follow_up_rules")
+}
+
+/// 追客履歴。「いつ・誰が・何をしたか」の全記録。
+/// 営業マンの手入力ではなく、ボタン操作とシステム処理から自動的に積み上がる。
+model FollowUpLog {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  staffId    String?
+  staff      Staff?   @relation(fields: [staffId], references: [id], onDelete: SetNull)
+
+  actionType   ActionType
+  source       FollowUpSource  @default(MANUAL)
+  /// 対応結果（応答あり / 不在 / 送信のみ など）
+  result       String?
+  note         String?
+  statusBefore CustomerStatus?
+  statusAfter  CustomerStatus?
+  /// 予定していた次回アクション日時。期限超過で対応したかの分析に使う
+  scheduledFor DateTime?
+  occurredAt   DateTime        @default(now())
+  /// 自動処理の二重実行を物理的に防ぐ冪等キー（手動記録では null）
+  dedupeKey    String?         @unique
+  createdAt    DateTime        @default(now())
+
+  @@index([customerId, occurredAt])
+  @@index([occurredAt])
+  @@index([staffId, occurredAt])
+  @@map("follow_up_logs")
+}
+
+/// LINE送信テンプレート。営業マンに文章を考えさせないための候補文。
+/// 将来のAI生成に置き換えられるよう、選択と送信の経路を分けてある。【指示書 9】
+model MessageTemplate {
+  id         String          @id @default(cuid())
+  key        String          @unique
+  title      String
+  /// 本文。{{name}} {{assignee}} {{area}} {{rent}} を差し込める
+  body       String
+  /// この状況のときに候補として優先表示する
+  status     CustomerStatus?
+  actionType ActionType?
+  sortOrder  Int             @default(0)
+  enabled    Boolean         @default(true)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  @@index([status, enabled])
+  @@map("message_templates")
 }

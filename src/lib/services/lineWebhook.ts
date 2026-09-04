@@ -7,11 +7,15 @@
 import { ResolvedVia } from '@prisma/client'
 
 import { getProfile, replyTextMessage } from '@/lib/line/client'
+import { getStatelessChannelAccessToken } from '@/lib/line/statelessToken'
 import type { LineWebhookEvent } from '@/lib/line/types'
 import { env } from '@/lib/env'
 import { prisma } from '@/lib/prisma'
 import { recordInboundMessage, recordOutboundMessage } from './conversation'
+import { loadFollowUpContext, onCustomerInbound, onStaffOutbound, type FollowUpContext } from './followUp'
 import { applyQuickAction } from './quickAction'
+import { consumeLinkCode, linkResultMessage } from './staffLink'
+import { groupIdMessage, groupWelcomeMessage, isGroupIdRequest } from '@/lib/domain/groupSetup'
 import type { PolicyContext } from './policy'
 
 /** イベントの timestamp がこれ以上ずれていたらリプレイとみなして拒否する */
@@ -30,6 +34,29 @@ function textOf(event: LineWebhookEvent): string | null {
   return `[${m.type}]`
 }
 
+/**
+ * 顧客対応チャネルのアクセストークンを用意する。
+ *
+ * 1. LINE_CHANNEL_ACCESS_TOKEN があればそれを使う
+ * 2. 無ければ チャネルID＋シークレット から**使い捨てのトークン**を発行する
+ *
+ * 2 を用意してあるのは、顧客対応チャネルの LINE Developers 権限が社内に無く、
+ * トークンを取り出せない状況が現実に起きるため。そこで詰まると顧客名が
+ * 永久に「（名称未取得）」のままになる。
+ *
+ * どちらも用意できなければ null。**名前が付かないだけで、検知も通知も止めない。**
+ */
+async function mainChannelAccessToken(): Promise<string | null> {
+  const configured = env.optionalLineChannelAccessToken
+  if (configured) return configured
+
+  const channelId = env.optionalLineChannelId
+  const channelSecret = env.optionalLineChannelSecret
+  if (!channelId || !channelSecret) return null
+
+  return getStatelessChannelAccessToken(channelId, channelSecret)
+}
+
 async function resolveProfile(userId: string): Promise<{ displayName?: string | null; pictureUrl?: string | null } | null> {
   const existing = await prisma.customer.findUnique({
     where: { lineUserId: userId },
@@ -37,7 +64,9 @@ async function resolveProfile(userId: string): Promise<{ displayName?: string | 
   })
   if (existing?.displayName) return null // 既に取得済みなら API を叩かない（レート節約）
   try {
-    const profile = await getProfile(env.lineChannelAccessToken, userId)
+    const accessToken = await mainChannelAccessToken()
+    if (!accessToken) return null
+    const profile = await getProfile(accessToken, userId)
     return profile ? { displayName: profile.displayName, pictureUrl: profile.pictureUrl ?? null } : null
   } catch {
     return null
@@ -46,6 +75,12 @@ async function resolveProfile(userId: string): Promise<{ displayName?: string | 
 
 /** 署名の検証に成功したチャネル。応答（reply）に使うトークンを選ぶために使う */
 export type ChannelKind = 'MAIN' | 'NOTIFY'
+
+/**
+ * 追客設定の遅延読み込み。
+ * 1リクエストに複数イベントが入るため、必要になったときに1回だけ読む。
+ */
+type FollowUpLoader = () => Promise<FollowUpContext>
 
 async function ack(event: LineWebhookEvent, channel: ChannelKind, text: string): Promise<void> {
   if (!event.replyToken) return
@@ -83,10 +118,65 @@ async function isInternalStaff(userId: string): Promise<boolean> {
   return (await prisma.staff.count({ where: { lineUserId: userId, active: true } })) > 0
 }
 
-async function handleEvent(event: LineWebhookEvent, channel: ChannelKind, ctx: PolicyContext): Promise<void> {
+/**
+ * 社内通知チャネル（Bot②）に届いたイベント。
+ *
+ * こちらは**社内専用の連絡口**なので、顧客対応の対象には一切しない。
+ * 素通しすると、社内の人間が「未返信の顧客」として一覧に並んでしまう。
+ * ここで受け付けるのは担当者の連携コードだけ。
+ */
+async function handleInternalChannelEvent(event: LineWebhookEvent): Promise<void> {
+  const source = event.source
+
+  /**
+   * グループ・複数人トークに招待された場合。
+   * グループIDは画面のどこにも出ないため、ここで本人へ返信して伝える。
+   * これが無いと「グループを通知先にする」設定が事実上できない。
+   */
+  if (source?.type === 'group' || source?.type === 'room') {
+    const groupTarget = source.groupId ?? source.roomId
+    if (!groupTarget) return
+    if (event.type === 'join') {
+      await ack(event, 'NOTIFY', groupWelcomeMessage(groupTarget))
+      return
+    }
+    if (event.type === 'message' && event.message?.type === 'text' && isGroupIdRequest(event.message.text)) {
+      await ack(event, 'NOTIFY', groupIdMessage(groupTarget))
+    }
+    // グループ内の通常の会話には反応しない
+    return
+  }
+
+  const userId = source?.userId
+  if (!userId || source.type !== 'user') return
+
+  if (event.type === 'follow') {
+    await ack(event, 'NOTIFY', '社内通知Botです。管理画面で発行した連携コードを送信してください。')
+    return
+  }
+  if (event.type !== 'message' || event.message?.type !== 'text') return
+
+  const result = await consumeLinkCode(event.message.text, userId)
+  const message = linkResultMessage(result)
+  // コードが含まれていない発言（雑談・スタンプ等）には何も返さない
+  if (message) await ack(event, 'NOTIFY', message)
+}
+
+async function handleEvent(
+  event: LineWebhookEvent,
+  channel: ChannelKind,
+  ctx: PolicyContext,
+  followUp: FollowUpLoader,
+): Promise<void> {
   // 社内グループからのボタン操作を受けるため、1対1トーク限定の判定より前に処理する
   if (event.type === 'postback') {
     await handlePostback(event, channel, ctx)
+    return
+  }
+
+  // 社内通知チャネルからのイベントは顧客対応の対象外
+  if (channel === 'NOTIFY') {
+    await handleInternalChannelEvent(event)
     return
   }
 
@@ -100,7 +190,7 @@ async function handleEvent(event: LineWebhookEvent, channel: ChannelKind, ctx: P
   switch (event.type) {
     case 'message': {
       if (!event.message) return
-      await recordInboundMessage(
+      const inbound = await recordInboundMessage(
         {
           lineUserId: userId,
           lineMessageId: event.message.id,
@@ -112,6 +202,14 @@ async function handleEvent(event: LineWebhookEvent, channel: ChannelKind, ctx: P
         },
         ctx,
       )
+      /**
+       * 顧客から返信が来た＝追客の状況が変わった。
+       * 「返信なし」「休眠」から復活させ、次回アクションを引き直すのはシステムの仕事で、
+       * 営業マンにステータスを触らせない。【指示書 4】
+       */
+      if (!inbound.duplicate) {
+        await onCustomerInbound(inbound.customerId, new Date(event.timestamp), await followUp())
+      }
       return
     }
     case 'follow': {
@@ -160,6 +258,7 @@ async function handleEvent(event: LineWebhookEvent, channel: ChannelKind, ctx: P
         },
         ctx,
       )
+      await onStaffOutbound(customer.id, new Date(event.timestamp), null, await followUp())
       return
     }
     default:
@@ -180,6 +279,10 @@ export async function processLineEvents(
   ctx: PolicyContext,
   now = Date.now(),
 ): Promise<void> {
+  let followUpContext: FollowUpContext | null = null
+  const getFollowUpContext = async (): Promise<FollowUpContext> =>
+    (followUpContext ??= await loadFollowUpContext(new Date(now)))
+
   for (const event of events) {
     try {
       if (Math.abs(now - event.timestamp) > MAX_CLOCK_SKEW_MS && !event.deliveryContext?.isRedelivery) {
@@ -203,7 +306,7 @@ export async function processLineEvents(
         }
       }
 
-      await handleEvent(event, channel, ctx)
+      await handleEvent(event, channel, ctx, getFollowUpContext)
 
       if (event.webhookEventId) {
         await prisma.webhookEvent

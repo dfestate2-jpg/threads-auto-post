@@ -15,13 +15,13 @@ import {
   type NotifyTarget,
   type StaffTarget,
 } from '@/lib/domain/escalation'
-import { buildNotificationText } from '@/lib/domain/notificationText'
+import { buildDigestText, buildNotificationText, type DigestEntry } from '@/lib/domain/notificationText'
 import { computeNextReminderAt, isAwaitingReply } from '@/lib/domain/reminderSchedule'
 import { addBusinessMinutes } from '@/lib/domain/businessHours'
 import { addMinutes, diffMinutes } from '@/lib/domain/time'
 import { env } from '@/lib/env'
 import { dispatchFallback, dispatchNotification, type QuickActionOptions } from '@/lib/notify/dispatcher'
-import { buildResolveActionData } from '@/lib/line/quickAction'
+import { buildAssignActionData, buildResolveActionData } from '@/lib/line/quickAction'
 import { prisma } from '@/lib/prisma'
 import { loadPolicyContext } from './context'
 import { loadNotifyDirectory, type NotifyDirectory } from './notifyTargets'
@@ -95,13 +95,37 @@ async function clearSchedule(conversationId: string, data: Prisma.ConversationUp
   })
 }
 
+/**
+ * 送信の直前まで準備できた1件。
+ * まとめ通知のために、**送信と確定を呼び出し側へ遅らせられる**ようにしている。
+ */
+interface PendingDelivery {
+  conversationId: string
+  reminderId: string
+  targets: NotifyTarget[]
+  /** まとめずに送る場合の本文。まとめ通知が全滅したときの予備送信にも使う */
+  bodyText: string
+  quick: QuickActionOptions | undefined
+  now: Date
+  sequence: number
+  newEscalationLevel: number
+  schedulingInput: { awaitingSince: Date; firstUnrepliedAt: Date }
+  policy: ReturnType<typeof buildPolicy>
+  digestEntry: DigestEntry
+}
+
+type ProcessResult =
+  | { kind: 'DONE'; outcome: ProcessOutcome }
+  /** まとめ通知に回す。送信も予定の確定もまだ行っていない */
+  | { kind: 'DEFERRED'; delivery: PendingDelivery }
+
 async function processConversation(
   conversationId: string,
   ctx: PolicyContext,
   rules: EscalationRuleInput[],
   directory: NotifyDirectory,
   now: Date,
-): Promise<ProcessOutcome> {
+): Promise<ProcessResult> {
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
     include: {
@@ -110,7 +134,7 @@ async function processConversation(
       },
     },
   })
-  if (!conversation) return 'skipped'
+  if (!conversation) return { kind: 'DONE', outcome: 'skipped' }
 
   const { customer } = conversation
   const cal = ctx.calendar
@@ -130,19 +154,19 @@ async function processConversation(
       awaitingSince: null,
       firstUnrepliedAt: null,
     })
-    return 'skipped'
+    return { kind: 'DONE', outcome: 'skipped' }
   }
 
   // ブロック済み顧客へは送れないので、人が確認できるよう「要確認」に落として止める
   if (customer.blocked) {
     await clearSchedule(conversationId, { handlingStatus: HandlingStatus.NEEDS_CHECK })
-    return 'skipped'
+    return { kind: 'DONE', outcome: 'skipped' }
   }
 
   const policy = buildPolicy(ctx, customer.reminderIntervalMinutes)
   if (policy.intervalMinutes <= 0) {
     await clearSchedule(conversationId)
-    return 'skipped'
+    return { kind: 'DONE', outcome: 'skipped' }
   }
 
   // ---------------------------------------------------------------------
@@ -154,7 +178,7 @@ async function processConversation(
       where: { id: conversationId },
       data: { nextReminderAt: resume, version: { increment: 1 } },
     })
-    return 'skipped'
+    return { kind: 'DONE', outcome: 'skipped' }
   }
 
   const elapsedMinutes = settings.countBusinessHoursOnly
@@ -196,13 +220,14 @@ async function processConversation(
     manager,
     admins: directory.admins,
     groupChannels: directory.groupChannels,
+    alwaysIncludeGroup: settings.alwaysNotifyDefaultGroup,
     adminChannels: directory.adminChannels,
     fallbackChannels: directory.fallbackChannels,
   })
 
   const bodyText = buildNotificationText({
     kind,
-    customerName: customer.name ?? customer.displayName ?? customer.lineUserId,
+    customerName: customer.name ?? customer.displayName ?? customer.lineUserId ?? '（名称未登録）',
     unrepliedMinutes: elapsedMinutes,
     totalUnrepliedMinutes,
     lastMessage: conversation.lastInboundText,
@@ -210,29 +235,54 @@ async function processConversation(
     reminderCount: sequence,
     escalationThresholdMinutes: topCrossed?.thresholdMinutes,
     escalationRuleName: topCrossed?.name,
+    /**
+     * 「上にも伝わっている」ことが本人に分かるようにする。
+     * ルール名は利用者が自由に付けられるので、そのまま出さず
+     * 誰に広がったかだけを短く言い換える。
+     */
+    template: settings.notificationTemplate,
+    escalationNote: topCrossed
+      ? topCrossed.notifyAdmins
+        ? '管理者にも通知'
+        : topCrossed.notifyManager
+          ? '責任者にも通知'
+          : null
+      : null,
     detailUrl: detailUrl(customer.id),
     includeMessageBody: settings.includeMessageBodyInNotification,
     excerptLength: settings.messageExcerptLength,
   })
 
   /**
-   * 社内LINE通知に付ける「対応済みにする」ボタン。
-   * 公式LINEのチャット画面から返信しても Webhook には届かない（LINE仕様）ため、
-   * 営業担当の工数を「タップ1回」にするための経路。
-   * cycleStart を署名付きで埋めているので、**古い通知のボタンでは今の未返信を閉じられない**。
+   * 社内LINE通知に付けるワンタップ操作。
+   *
+   * 「対応済みにする」— 公式LINEのチャット画面から返信しても Webhook には届かない（LINE仕様）ため、
+   * 営業担当の工数を「タップ1回」にするための経路。cycleStart を署名付きで埋めているので、
+   * **古い通知のボタンでは今の未返信を閉じられない**。
+   *
+   * 「自分が担当にする」— 担当者の割り当ては管理画面を開かないとできず、
+   * それだと通知を見た流れで決められない。ボタンは同じ push にまとめて載るので
+   * **消費通数は増えない**。
+   *
    * 署名鍵の未設定などで作れなかった場合はボタン無しで通知する（通知は絶対に止めない）。
    */
   let quick: QuickActionOptions | undefined
   try {
-    const data = buildResolveActionData(
-      { customerId: customer.id, cycleId: cycleStart.getTime() },
-      env.quickActionSecret,
-    )
-    if (data) {
-      quick = {
-        prompt: '返信済みの場合はこちらをタップしてください',
-        actions: [{ label: '✅ 対応済みにする', data, displayText: '対応済みにする' }],
-      }
+    const target = { customerId: customer.id, cycleId: cycleStart.getTime() }
+    const resolveData = buildResolveActionData(target, env.quickActionSecret)
+    const assignData = buildAssignActionData(target, env.quickActionSecret)
+    const actions = [
+      ...(resolveData ? [{ label: '✅ 対応済みにする', data: resolveData, displayText: '対応済みにする' }] : []),
+      ...(assignData ? [{ label: '🙋 自分が担当にする', data: assignData, displayText: '自分が担当にする' }] : []),
+    ]
+    if (actions.length > 0) {
+      /**
+       * ボタンは本文とは別の吹き出しで出る。通知が何件も溜まると
+       * ボタンだけ見ても誰のものか分からず、**別の顧客のボタンを押す**事故が起きる。
+       * 宛先の顧客名をボタンの上に必ず出す。
+       */
+      const label = customer.name ?? customer.displayName ?? customer.lineUserId
+      quick = { prompt: `${label} 様への操作`, actions }
     }
   } catch (e) {
     console.warn('[reminder] quick action の生成に失敗（ボタン無しで通知します）', String(e))
@@ -267,7 +317,7 @@ async function processConversation(
         version: { increment: 1 },
       },
     })
-    return 'failed'
+    return { kind: 'DONE', outcome: 'failed' }
   }
 
   // ---------------------------------------------------------------------
@@ -292,7 +342,7 @@ async function processConversation(
       where: { id: conversationId },
       data: { nextReminderAt: schedule.nextReminderAt, version: { increment: 1 } },
     })
-    return 'skipped'
+    return { kind: 'DONE', outcome: 'skipped' }
   }
 
   let reminderId: string
@@ -325,16 +375,57 @@ async function processConversation(
         where: { id: conversationId },
         data: { nextReminderAt: addMinutes(now, 2), version: { increment: 1 } },
       })
-      return 'skipped'
+      return { kind: 'DONE', outcome: 'skipped' }
     }
     throw e
   }
 
-  const { results, anySucceeded } = await dispatchNotification(targets, bodyText, quick)
+  const delivery: PendingDelivery = {
+    conversationId,
+    reminderId,
+    targets,
+    bodyText,
+    quick,
+    now,
+    sequence,
+    newEscalationLevel: Math.max(conversation.escalationLevel, currentEscalationLevel(totalUnrepliedMinutes, rules)),
+    schedulingInput: {
+      awaitingSince: conversation.awaitingSince,
+      firstUnrepliedAt: conversation.firstUnrepliedAt,
+    },
+    policy,
+    digestEntry: {
+      customerName: customer.name ?? customer.displayName ?? customer.lineUserId ?? '（名称未登録）',
+      totalUnrepliedMinutes,
+      assigneeName: customer.assignee?.name ?? null,
+    },
+  }
 
+  /**
+   * 2回目以降の通常リマインドは、この場では送らずに呼び出し側へ返す。
+   * まとめて1通にするため。**予定の更新と記録は送信結果が出てから**行うので、
+   * ここで返しても「送ったことにして予定だけ進む」ことは起きない。
+   *
+   * エスカレーションと保険通知（連投中）は個別のまま。
+   * 「重い」ことを伝える通知なので、まとめて埋もれさせてはいけない。
+   */
+  if (settings.digestRepeatReminders && kind === ReminderKind.ROUTINE && sequence >= 2) {
+    return { kind: 'DEFERRED', delivery }
+  }
+
+  const { results, anySucceeded } = await dispatchNotification(targets, bodyText, quick)
+  return { kind: 'DONE', outcome: await finalizeDelivery(delivery, results, anySucceeded) }
+}
+
+/** 送信結果を反映して、記録と次回予定を確定する */
+async function finalizeDelivery(
+  d: PendingDelivery,
+  results: { target: NotifyTarget; ok: boolean; error?: string }[],
+  anySucceeded: boolean,
+): Promise<ProcessOutcome> {
   if (!anySucceeded) {
     const reminder = await prisma.reminder.update({
-      where: { id: reminderId },
+      where: { id: d.reminderId },
       data: {
         status: ReminderStatus.FAILED,
         error: results
@@ -343,13 +434,13 @@ async function processConversation(
           .slice(0, 900),
       },
     })
-    await dispatchFallback(bodyText)
+    await dispatchFallback(d.bodyText)
     const backoff =
       RETRY_BACKOFF_MINUTES[Math.min(reminder.attempts - 1, RETRY_BACKOFF_MINUTES.length - 1)] ?? 30
     await prisma.conversation.update({
-      where: { id: conversationId },
+      where: { id: d.conversationId },
       data: {
-        nextReminderAt: addMinutes(now, backoff),
+        nextReminderAt: addMinutes(d.now, backoff),
         // 3回失敗したら人の目を入れる
         ...(reminder.attempts >= 3 ? { handlingStatus: HandlingStatus.NEEDS_CHECK } : {}),
         version: { increment: 1 },
@@ -358,38 +449,34 @@ async function processConversation(
     return 'failed'
   }
 
-  const newEscalationLevel = Math.max(
-    conversation.escalationLevel,
-    currentEscalationLevel(totalUnrepliedMinutes, rules),
-  )
   const schedule = computeNextReminderAt(
     {
-      awaitingSince: conversation.awaitingSince,
-      firstUnrepliedAt: conversation.firstUnrepliedAt,
-      reminderCount: sequence,
-      lastReminderAt: now,
-      escalationLevel: newEscalationLevel,
+      awaitingSince: d.schedulingInput.awaitingSince,
+      firstUnrepliedAt: d.schedulingInput.firstUnrepliedAt,
+      reminderCount: d.sequence,
+      lastReminderAt: d.now,
+      escalationLevel: d.newEscalationLevel,
     },
-    policy,
+    d.policy,
   )
 
   await prisma.$transaction([
     prisma.reminder.update({
-      where: { id: reminderId },
+      where: { id: d.reminderId },
       data: {
         status: ReminderStatus.SENT,
-        sentAt: now,
+        sentAt: d.now,
         error: results.some((r) => !r.ok)
           ? `一部失敗: ${results.filter((r) => !r.ok).map((r) => r.target.label).join(', ')}`.slice(0, 900)
           : null,
       },
     }),
     prisma.conversation.update({
-      where: { id: conversationId },
+      where: { id: d.conversationId },
       data: {
-        reminderCount: sequence,
-        lastReminderAt: now,
-        escalationLevel: newEscalationLevel,
+        reminderCount: d.sequence,
+        lastReminderAt: d.now,
+        escalationLevel: d.newEscalationLevel,
         nextReminderAt: schedule.nextReminderAt,
         version: { increment: 1 },
       },
@@ -430,7 +517,7 @@ async function runWatchdog(ctx: PolicyContext, directory: NotifyDirectory, now: 
     const key = watchdogDedupeKey(conv.id, conv.firstUnrepliedAt, now)
     const body = buildNotificationText({
       kind: 'WATCHDOG',
-      customerName: conv.customer.name ?? conv.customer.displayName ?? conv.customer.lineUserId,
+      customerName: conv.customer.name ?? conv.customer.displayName ?? conv.customer.lineUserId ?? '（名称未登録）',
       unrepliedMinutes: diffMinutes(now, conv.awaitingSince),
       totalUnrepliedMinutes: diffMinutes(now, conv.firstUnrepliedAt),
       lastMessage: conv.lastInboundText,
@@ -470,6 +557,56 @@ async function runWatchdog(ctx: PolicyContext, directory: NotifyDirectory, now: 
   return notified
 }
 
+/**
+ * まとめ通知の送信。
+ *
+ * **宛先ごとにまとめる。** 会話によって宛先は違う（担当者の個人LINE、社内グループ…）ので、
+ * 全部を1通にして全員へ送ると、他人の担当顧客が個人LINEに流れてしまう。
+ * 「その宛先が本来受け取るはずだった分」だけを1通にする。
+ *
+ * 送信結果は会話ごとに割り戻す。ひとつでも届いた宛先があれば送信成功として
+ * 予定を進め、全滅した会話は個別の本文で予備送信したうえで再試行に回す。
+ * = まとめたことで通知が消える、という事故を作らない。
+ */
+async function flushDigest(deliveries: PendingDelivery[]): Promise<{ sent: number; failed: number }> {
+  const byTarget = new Map<string, { target: NotifyTarget; items: PendingDelivery[] }>()
+  for (const d of deliveries) {
+    for (const t of d.targets) {
+      const key = `${t.channel}:${t.target}`
+      const bucket = byTarget.get(key) ?? { target: t, items: [] }
+      bucket.items.push(d)
+      byTarget.set(key, bucket)
+    }
+  }
+
+  /** 会話ID -> 宛先ごとの結果 */
+  const perDelivery = new Map<string, { target: NotifyTarget; ok: boolean; error?: string }[]>()
+  const record = (d: PendingDelivery, r: { target: NotifyTarget; ok: boolean; error?: string }): void => {
+    const list = perDelivery.get(d.conversationId) ?? []
+    list.push(r)
+    perDelivery.set(d.conversationId, list)
+  }
+
+  for (const { target, items } of byTarget.values()) {
+    const text = buildDigestText(items.map((d) => d.digestEntry))
+    const { results } = await dispatchNotification([target], text)
+    const r = results[0]
+    for (const d of items) {
+      record(d, { target, ok: r?.ok ?? false, error: r?.error })
+    }
+  }
+
+  let sent = 0
+  let failed = 0
+  for (const d of deliveries) {
+    const results = perDelivery.get(d.conversationId) ?? []
+    const outcome = await finalizeDelivery(d, results, results.some((r) => r.ok))
+    if (outcome === 'sent') sent += 1
+    else failed += 1
+  }
+  return { sent, failed }
+}
+
 /** Cron から呼ばれる本体 */
 export async function runReminderJob(now = new Date()): Promise<RunSummary> {
   const startedAt = Date.now()
@@ -501,10 +638,12 @@ export async function runReminderJob(now = new Date()): Promise<RunSummary> {
     const ids = await claimDueConversations(now, leaseUntil, BATCH_SIZE)
     summary.claimed = ids.length
 
+    const deferred: PendingDelivery[] = []
     for (const id of ids) {
       try {
-        const outcome = await processConversation(id, ctx, rules, directory, now)
-        summary[outcome] += 1
+        const result = await processConversation(id, ctx, rules, directory, now)
+        if (result.kind === 'DEFERRED') deferred.push(result.delivery)
+        else summary[result.outcome] += 1
       } catch (e) {
         summary.failed += 1
         // 1件の例外で残りの通知が止まらないようにする（通知漏れ防止）
@@ -513,6 +652,12 @@ export async function runReminderJob(now = new Date()): Promise<RunSummary> {
           .update({ where: { id }, data: { nextReminderAt: addMinutes(now, 5) } })
           .catch(() => undefined)
       }
+    }
+
+    if (deferred.length > 0) {
+      const digest = await flushDigest(deferred)
+      summary.sent += digest.sent
+      summary.failed += digest.failed
     }
   } catch (e) {
     jobError = e instanceof Error ? e.message : String(e)

@@ -1,12 +1,26 @@
 import { redirect } from 'next/navigation'
 
 import { readSession } from '@/lib/auth/session'
+import { prisma } from '@/lib/prisma'
+import { isSetupPending } from '@/lib/services/bootstrap'
 import { LoginForm } from './LoginForm'
 
 export const dynamic = 'force-dynamic'
 
 export default async function LoginPage() {
   if (await readSession()) redirect('/')
+
+  // 管理者が1人もいない = 初回。ログイン画面で迷わせず初期設定へ送る。
+  // redirect() は内部で例外を投げるため、**必ず try の外で呼ぶ**
+  // （中で呼ぶと catch に飲まれてリダイレクトしない）。
+  let pending = false
+  try {
+    pending = await isSetupPending(prisma)
+  } catch {
+    // DBに繋がらない場合はログイン画面をそのまま出す（原因は /setup 側で表示する）
+  }
+  if (pending) redirect('/setup')
+
   return (
     <main className="flex min-h-screen items-center justify-center px-4">
       <div className="card w-full max-w-sm p-6">

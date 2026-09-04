@@ -61,9 +61,43 @@ describe('エスカレーション段階の判定', () => {
 
 describe('通知先の解決【仕様③】', () => {
   it('担当者が設定されていれば担当者へ通知する', () => {
-    const t = resolve(60)
+    const t = resolve(60, { alwaysIncludeGroup: false })
     expect(t).toHaveLength(1)
     expect(t[0]).toMatchObject({ channel: 'LINE_USER', target: 'Uassignee', role: 'ASSIGNEE' })
+  })
+
+  it('既定では担当者に加えて社内共通の通知先へも同報する（事務など担当者以外も返信するため）', () => {
+    const t = resolve(60)
+    expect(t.map((x) => x.target).sort()).toEqual(['Cgroup', 'Uassignee'])
+  })
+
+  it('同報を切ると担当者だけになる', () => {
+    const t = resolve(60, { alwaysIncludeGroup: false })
+    expect(t.map((x) => x.target)).toEqual(['Uassignee'])
+  })
+
+  it('担当者が社内共通の通知先にも入っていても二重には送らない', () => {
+    const t = resolve(60, {
+      groupChannels: [
+        { id: 'c1', name: '営業全員', type: 'LINE_USER', target: 'Uassignee' },
+        { id: 'c3', name: '事務', type: 'LINE_USER', target: 'Ujimu' },
+      ],
+    })
+    expect(t.map((x) => x.target).sort()).toEqual(['Uassignee', 'Ujimu'])
+  })
+
+  it('グループが使えない環境でも、個人宛を複数登録すれば全員に届く', () => {
+    const t = resolve(60, {
+      assignee: null,
+      manager: null,
+      groupChannels: [
+        { id: 'c1', name: '営業A', type: 'LINE_USER', target: 'Usales-a' },
+        { id: 'c2', name: '営業B', type: 'LINE_USER', target: 'Usales-b' },
+        { id: 'c3', name: '事務', type: 'LINE_USER', target: 'Ujimu' },
+      ],
+    })
+    expect(t.map((x) => x.target).sort()).toEqual(['Ujimu', 'Usales-a', 'Usales-b'])
+    expect(t.every((x) => x.channel === 'LINE_USER')).toBe(true)
   })
 
   it('担当者未設定なら社内共通グループへ通知する', () => {
@@ -83,8 +117,13 @@ describe('通知先の解決【仕様③】', () => {
   })
 
   it('3時間経過で担当者＋責任者になる', () => {
-    const t = resolve(180)
+    const t = resolve(180, { alwaysIncludeGroup: false })
     expect(t.map((x) => x.target).sort()).toEqual(['Uassignee', 'Umanager'])
+  })
+
+  it('同報が有効なら3時間経過でも社内共通の通知先が含まれる', () => {
+    const t = resolve(180)
+    expect(t.map((x) => x.target).sort()).toEqual(['Cgroup', 'Uassignee', 'Umanager'])
   })
 
   it('6時間経過で管理者と共通グループが加わる', () => {
