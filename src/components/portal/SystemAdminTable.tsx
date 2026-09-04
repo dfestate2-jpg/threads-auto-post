@@ -11,7 +11,6 @@ import {
   ICON_SUGGESTIONS,
   ROLE_LABEL,
   accentOf,
-  displayHost,
   moveInOrder,
   type PortalRole,
 } from '@/lib/domain/portal'
@@ -184,7 +183,7 @@ export function SystemAdminTable({ initial }: { initial: SystemRow[] }) {
 
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-bold text-slate-900">{row.name}</span>
+                      <span className="break-words font-bold text-slate-900">{row.name}</span>
                       {row.published ? (
                         <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">
                           公開中
@@ -200,10 +199,15 @@ export function SystemAdminTable({ initial }: { initial: SystemRow[] }) {
                         </span>
                       ) : null}
                     </div>
-                    {row.description ? <p className="mt-0.5 text-sm text-slate-500">{row.description}</p> : null}
-                    <p className="mt-1 break-all text-xs text-slate-400">
+                    {row.description ? (
+                      <p className="mt-0.5 break-words text-sm text-slate-500">{row.description}</p>
+                    ) : null}
+                    {/*
+                      スマホではURLが2〜3行に折り返して行が間延びするため1行に省略する。
+                      全文は編集画面で確認できるので、ここでは「どこへ飛ぶか」が分かれば足りる。
+                    */}
+                    <p className="mt-1 truncate text-xs text-slate-400" title={row.url}>
                       {row.url}
-                      <span className="ml-1">（{displayHost(row.url)}）</span>
                     </p>
                   </div>
 
@@ -256,7 +260,7 @@ function IconButton({
       title={label}
       onClick={onClick}
       disabled={disabled}
-      className="h-8 w-8 rounded-lg border border-slate-300 bg-white text-sm text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
+      className="h-10 w-10 rounded-lg border border-slate-300 bg-white text-sm text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30 sm:h-9 sm:w-9"
     >
       {children}
     </button>

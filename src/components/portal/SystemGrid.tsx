@@ -37,13 +37,23 @@ function SystemCard({ system }: { system: PortalSystem }) {
       >
         {system.icon}
       </span>
-      <span className="block text-[15px] font-bold leading-snug text-slate-900 sm:text-base">{system.name}</span>
+      <span className="block break-words text-[15px] font-bold leading-snug text-slate-900 sm:text-base">
+        {system.name}
+      </span>
       {system.description ? (
-        <span className="mt-1 block text-xs leading-relaxed text-slate-500 sm:text-[13px]">{system.description}</span>
+        <span className="mt-1 block break-words text-xs leading-relaxed text-slate-500 sm:text-[13px]">
+          {system.description}
+        </span>
       ) : null}
-      <span className="mt-auto pt-3 text-[11px] text-slate-400">
-        {displayHost(system.url)}
-        {system.openInNewTab ? ' ↗' : ''}
+      {/*
+        ドメイン名は途中で改行できないため、狭い画面ではカードからはみ出して
+        ページ全体が横スクロールしてしまう。ここは補足情報なので、
+        収まらない分は省略してレイアウトを優先する。
+      */}
+      <span className="mt-auto flex items-center gap-1 pt-3 text-[11px] text-slate-400">
+        <span className="min-w-0 truncate">{displayHost(system.url)}</span>
+        {/* 別タブで開く印は、ドメイン名を省略しても残るように外に出す */}
+        {system.openInNewTab ? <span aria-hidden>↗</span> : null}
       </span>
     </>
   )

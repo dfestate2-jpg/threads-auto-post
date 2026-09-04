@@ -26,22 +26,24 @@ export function PortalShell({
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <Link href="/portal" className="flex items-center gap-3">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-3 sm:gap-3 sm:px-6">
+          {/* min-w-0 が無いと、長いサービス名が縮まずに右側のボタンを押し出す */}
+          <Link href="/portal" className="flex min-w-0 items-center gap-2 sm:gap-3">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-sm font-bold text-white">
               DF
             </span>
-            <span className="leading-tight">
-              <span className="block text-[15px] font-bold text-slate-900 sm:text-base">{PORTAL_TITLE}</span>
+            <span className="min-w-0 leading-tight">
+              {/* 狭い画面で単語の途中で折り返すと読みにくいので、はみ出す分は省略する */}
+              <span className="block truncate text-sm font-bold text-slate-900 sm:text-base">{PORTAL_TITLE}</span>
               <span className="hidden text-xs text-slate-500 sm:block">{PORTAL_SUBTITLE}</span>
             </span>
           </Link>
 
-          <div className="flex items-center gap-2 sm:gap-4">
+          <div className="flex shrink-0 items-center gap-1 sm:gap-4">
             {isAdmin ? (
               <Link
                 href={current === 'admin' ? '/portal' : '/portal/admin'}
-                className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                className="whitespace-nowrap rounded-lg px-2 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 sm:px-3"
               >
                 {current === 'admin' ? 'トップへ' : '設定'}
               </Link>
