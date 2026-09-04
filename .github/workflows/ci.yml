@@ -90,3 +90,8 @@ jobs:
       # 通知はローカルの受信サーバーへ送るため、LINE / Slack への接続は発生しない
       - name: Integration check
         run: npx tsx scripts/e2e-check.ts
+
+      # 一斉メール配信も同じ理由で実DBに対して流す。
+      # MAIL_PROVIDER を設定しないためドライランになり、外部へは送信しない
+      - name: Integration check (email campaign)
+        run: npx tsx scripts/e2e-campaign.ts
