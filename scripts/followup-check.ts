@@ -14,7 +14,7 @@ import { ActionType, CustomerStatus, FollowUpSource, PrismaClient, ReplyState } 
 import { startOfDayIn } from '../src/lib/domain/time'
 import { ensureBaselineData } from '../src/lib/services/bootstrap'
 import { loadPolicyContext } from '../src/lib/services/context'
-import { recordInboundMessage } from '../src/lib/services/conversation'
+import { markResolvedManually, recordInboundMessage } from '../src/lib/services/conversation'
 import { loadFollowUpContext, onCustomerInbound, recordFollowUpAction } from '../src/lib/services/followUp'
 import { runFollowUpJob } from '../src/lib/services/followUpRunner'
 import { getTodayList } from '../src/lib/services/todayList'
@@ -222,6 +222,55 @@ async function main(): Promise<void> {
   check('今日やることの最優先に出る', waitingRow !== undefined)
   // ステータス開始の経過ではなく、待たせている時間を出す（返信直後は前者が0になるため）
   check('理由に「未返信」と待たせている時間が出る', (waitingRow?.reason ?? '').startsWith('未返信'), waitingRow?.reason)
+
+  // -------------------------------------------------------------------------
+  console.log('\n⑦-2 「対応済みにする」で次回アクションも引き直される')
+  /**
+   * LINE公式Managerで返信して「対応済みにする」を押した場合の経路。
+   * ここで追客側を更新し忘れると、返信済みなのに
+   * 「顧客から返信あり。内容を確認して返信」が出続ける（実際に本番で起きた）。
+   */
+  const handled = await prisma.customer.create({
+    data: { name: '公式Manager 返信子', lineUserId: `U-manager-${Date.now()}`, status: CustomerStatus.PROPOSING, assigneeId: staff.id },
+  })
+  const handledInbound = await recordInboundMessage(
+    {
+      lineUserId: handled.lineUserId!,
+      lineMessageId: `m-handled-${Date.now()}`,
+      messageType: 'text',
+      text: '検討しています',
+      sentAt: new Date(),
+    },
+    await loadPolicyContext(),
+  )
+  await onCustomerInbound(handledInbound.customerId, new Date(), await loadFollowUpContext())
+  const beforeHandled = await prisma.customer.findUniqueOrThrow({ where: { id: handled.id } })
+  check('対応前は「返信する」が次回アクション', (beforeHandled.nextActionNote ?? '').includes('返信'), beforeHandled.nextActionNote)
+
+  await markResolvedManually(
+    handled.id,
+    { id: null, staffId: staff.id },
+    await loadPolicyContext(),
+    await loadFollowUpContext(),
+    'LINE公式Managerから返信済み',
+  )
+  const afterHandled = await prisma.customer.findUniqueOrThrow({
+    where: { id: handled.id },
+    include: { conversation: true },
+  })
+  check('リマインドは止まる', afterHandled.conversation?.replyState === ReplyState.REPLIED)
+  check(
+    '次回アクションが「返信する」のまま残らない',
+    !(afterHandled.nextActionNote ?? '').includes('顧客から返信あり'),
+    afterHandled.nextActionNote,
+  )
+  check('追客リズムが再開する（次回アクションが入る）', afterHandled.nextActionAt !== null, afterHandled.nextActionAt)
+  check('最終接触日時が更新される', afterHandled.lastContactAt !== null)
+  check('優先度が最優先から下がる', afterHandled.priority !== 'S', afterHandled.priority)
+  check(
+    '追客履歴に「対応済みにした」が残る',
+    (await prisma.followUpLog.count({ where: { customerId: handled.id, result: '対応済みにした' } })) === 1,
+  )
 
   // -------------------------------------------------------------------------
   console.log('\n⑧ 成約・失注で追客が止まる')

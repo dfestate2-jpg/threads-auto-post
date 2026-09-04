@@ -12,7 +12,7 @@ import type { LineWebhookEvent } from '@/lib/line/types'
 import { env } from '@/lib/env'
 import { prisma } from '@/lib/prisma'
 import { recordInboundMessage, recordOutboundMessage } from './conversation'
-import { loadFollowUpContext, onCustomerInbound, onStaffOutbound, type FollowUpContext } from './followUp'
+import { loadFollowUpContext, onCustomerInbound, type FollowUpContext } from './followUp'
 import { applyQuickAction } from './quickAction'
 import { consumeLinkCode, linkResultMessage } from './staffLink'
 import { groupIdMessage, groupWelcomeMessage, isGroupIdRequest } from '@/lib/domain/groupSetup'
@@ -257,8 +257,8 @@ async function handleEvent(
           raw: event as unknown,
         },
         ctx,
+        await followUp(),
       )
-      await onStaffOutbound(customer.id, new Date(event.timestamp), null, await followUp())
       return
     }
     default:
