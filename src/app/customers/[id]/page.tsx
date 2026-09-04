@@ -18,7 +18,7 @@ import { requirePageSession } from '@/lib/auth/guard'
 import { ACTION_TYPE_LABEL, CUSTOMER_STATUS_LABEL, PRIORITY_LABEL } from '@/lib/domain/followUp'
 import { pickTemplates, renderTemplate } from '@/lib/domain/messageTemplate'
 import { diffMinutes } from '@/lib/domain/time'
-import { prisma } from '@/lib/prisma'
+import { prisma, withReadRetry } from '@/lib/prisma'
 import { getSettings } from '@/lib/services/settings'
 
 export const dynamic = 'force-dynamic'
@@ -60,22 +60,27 @@ export default async function CustomerDetailPage({
   })
   if (!customer) notFound()
 
-  const [followUpLogs, messages, staff, templateRows] = await Promise.all([
-    prisma.followUpLog.findMany({
-      where: { customerId: id },
-      orderBy: { occurredAt: 'desc' },
-      take: 50,
-      include: { staff: { select: { name: true } } },
-    }),
-    prisma.message.findMany({
-      where: { customerId: id },
-      orderBy: { sentAt: 'desc' },
-      take: 30,
-      include: { sentByStaff: { select: { name: true } } },
-    }),
-    prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-    prisma.messageTemplate.findMany({ where: { enabled: true }, orderBy: { sortOrder: 'asc' } }),
-  ])
+  const [followUpLogs, messages, staff, templateRows] = await withReadRetry(() =>
+
+    Promise.all([
+      prisma.followUpLog.findMany({
+        where: { customerId: id },
+        orderBy: { occurredAt: 'desc' },
+        take: 50,
+        include: { staff: { select: { name: true } } },
+      }),
+      prisma.message.findMany({
+        where: { customerId: id },
+        orderBy: { sentAt: 'desc' },
+        take: 30,
+        include: { sentByStaff: { select: { name: true } } },
+      }),
+      prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+      prisma.messageTemplate.findMany({ where: { enabled: true }, orderBy: { sortOrder: 'asc' } }),
+
+    ]),
+
+  )
 
   const displayName = customer.name ?? customer.displayName ?? '（名称未登録）'
   const conv = customer.conversation

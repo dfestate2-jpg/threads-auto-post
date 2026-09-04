@@ -11,6 +11,7 @@
  */
 import { ActionType, CustomerStatus, FollowUpSource, PrismaClient, ReplyState } from '@prisma/client'
 
+import { startOfDayIn } from '../src/lib/domain/time'
 import { ensureBaselineData } from '../src/lib/services/bootstrap'
 import { loadPolicyContext } from '../src/lib/services/context'
 import { recordInboundMessage } from '../src/lib/services/conversation'
@@ -48,9 +49,26 @@ async function reset(): Promise<void> {
   await ensureBaselineData(prisma)
 }
 
-/** 顧客を作る。ステータス開始時刻を過去にずらして「時間が経った状態」を作れる */
-async function createCustomer(name: string, status: CustomerStatus, statusSinceAgoDays: number, extra: Record<string, unknown> = {}) {
-  const statusSince = new Date(Date.now() - statusSinceAgoDays * DAY)
+/** n日前の時刻 */
+function daysAgo(days: number): Date {
+  return new Date(Date.now() - days * DAY)
+}
+
+/**
+ * 判定の基準となるタイムゾーン（Asia/Tokyo）での「今日の午前1時」。
+ *
+ * 内見当日フォロー（4時間後）のように当日中に期限が来るケースを、
+ * 実行した時刻に左右されずに検証するために使う。
+ * 「いま」を起点にすると、夜に実行したとき「いま + 4時間」が翌日に回り、
+ * 自動追客中と判定されて結果が変わってしまう。
+ * 実行環境のタイムゾーンではなく、アプリと同じ基準で計算する。
+ */
+function earlyToday(): Date {
+  return new Date(startOfDayIn(TZ, new Date()).getTime() + 1 * 3_600_000)
+}
+
+/** 顧客を作る。ステータス開始時刻を指定して「時間が経った状態」を作れる */
+async function createCustomer(name: string, status: CustomerStatus, statusSince: Date, extra: Record<string, unknown> = {}) {
   const customer = await prisma.customer.create({
     data: {
       name,
@@ -85,7 +103,7 @@ async function main(): Promise<void> {
   // -------------------------------------------------------------------------
   console.log('① 顧客登録と同時に次回アクションが決まる')
   const staff = await prisma.staff.create({ data: { name: '営業テスト担当' } })
-  const rookie = await createCustomer('新規 太郎', CustomerStatus.NEW_INQUIRY, 0, { assigneeId: staff.id })
+  const rookie = await createCustomer('新規 太郎', CustomerStatus.NEW_INQUIRY, daysAgo(0), { assigneeId: staff.id })
   check('新規反響に次回アクションが自動設定される', rookie.nextActionAt !== null, rookie.nextActionAt)
   check('最初のアクションは電話', rookie.nextActionType === ActionType.CALL, rookie.nextActionType)
   check('営業マンは追客日を入力していない（システムが決めた）', rookie.followUpStep === 0)
@@ -121,14 +139,15 @@ async function main(): Promise<void> {
 
   // -------------------------------------------------------------------------
   console.log('\n④ 期限を過ぎた顧客が「今日やること」に必ず出る')
-  const overdueCustomer = await createCustomer('期限 超過子', CustomerStatus.PROPOSING, 10, { assigneeId: staff.id })
-  const todayCustomer = await createCustomer('今日 対応太', CustomerStatus.VIEWED, 0, { assigneeId: staff.id })
-  const futureCustomer = await createCustomer('自動 追客子', CustomerStatus.DORMANT, 0, { assigneeId: staff.id })
+  const overdueCustomer = await createCustomer('期限 超過子', CustomerStatus.PROPOSING, daysAgo(10), { assigneeId: staff.id })
+  const todayCustomer = await createCustomer('今日 対応太', CustomerStatus.VIEWED, earlyToday(), { assigneeId: staff.id })
+  const futureCustomer = await createCustomer('自動 追客子', CustomerStatus.DORMANT, daysAgo(0), { assigneeId: staff.id })
 
   await runFollowUpJob(new Date())
   const list = await getTodayList({ timezone: TZ, assigneeId: staff.id })
   check('期限超過に入る', list.overdue.some((r) => r.id === overdueCustomer.id), list.overdue.map((r) => r.name))
   check('期限超過の日数が出る', (list.overdue.find((r) => r.id === overdueCustomer.id)?.overdueDays ?? 0) >= 1)
+  // 内見の4時間後にフォローが立つ。起点を今日の早い時刻にしてあるので当日中に収まる
   check(
     '内見当日フォローは今日やることに入る',
     [...list.top, ...list.normal].some((r) => r.id === todayCustomer.id),
@@ -139,8 +158,8 @@ async function main(): Promise<void> {
 
   // 担当者ごとの絞り込み：他人の顧客が混ざると「自分の今日やること」が信用できなくなる
   const other = await prisma.staff.create({ data: { name: '別の営業' } })
-  const otherCustomer = await createCustomer('他担当 の客', CustomerStatus.PROPOSING, 10, { assigneeId: other.id })
-  const unassigned = await createCustomer('担当 未設定', CustomerStatus.PROPOSING, 10)
+  const otherCustomer = await createCustomer('他担当 の客', CustomerStatus.PROPOSING, daysAgo(10), { assigneeId: other.id })
+  const unassigned = await createCustomer('担当 未設定', CustomerStatus.PROPOSING, daysAgo(10))
   const mine = await getTodayList({ timezone: TZ, assigneeId: staff.id, includeUnassigned: true })
   check('他の担当者の顧客は自分の画面に出ない', !mine.overdue.some((r) => r.id === otherCustomer.id), mine.overdue.map((r) => r.name))
   check('担当者未設定の顧客は拾う（取りこぼさない）', mine.overdue.some((r) => r.id === unassigned.id))
@@ -149,7 +168,7 @@ async function main(): Promise<void> {
 
   // -------------------------------------------------------------------------
   console.log('\n⑤ 放置された顧客は自動で休眠になる【指示書 13】')
-  const abandoned = await createCustomer('返信 無男', CustomerStatus.NO_REPLY, 31, { assigneeId: staff.id })
+  const abandoned = await createCustomer('返信 無男', CustomerStatus.NO_REPLY, daysAgo(31), { assigneeId: staff.id })
   check('休眠化の前は返信なし', abandoned.status === CustomerStatus.NO_REPLY)
   // 30日ぶんのステップを消化した状態にしてから実行する
   await prisma.customer.update({ where: { id: abandoned.id }, data: { followUpStep: 4 } })
