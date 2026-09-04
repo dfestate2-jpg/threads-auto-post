@@ -40,22 +40,32 @@ export interface GeneralSettings {
   notificationTemplate: string | null
 }
 
-/** 編集中の文面がどう届くかを、その場で見せるための見本 */
-const PREVIEW_VALUES: Record<string, string> = {
-  '{印}': '⚠️',
-  '{経過時間}': '1時間20分',
-  '{補足}': '',
-  '{顧客名}': '山田太郎',
-  '{担当者}': '内田翔太',
-  '{メッセージ}': '内見の件ですが、来週の土曜日は空いていますでしょうか？',
-  '{URL}': 'https://remindsystem.netlify.app/customers/abc123',
+/**
+ * 編集中の文面がどう届くかを、その場で見せるための見本。
+ *
+ * URLだけは実際の公開URL（APP_BASE_URL）から組み立てる。
+ * 見本にURLを直接書いておくと、独自ドメインに変えたときに
+ * 見本だけ古いURLのままになり、設定画面が嘘をつくことになる。
+ * 組み立て方は services/reminderRunner の detailUrl と揃えてある。
+ */
+function previewValues(appBaseUrl: string): Record<string, string> {
+  return {
+    '{印}': '⚠️',
+    '{経過時間}': '1時間20分',
+    '{補足}': '',
+    '{顧客名}': '山田太郎',
+    '{担当者}': '内田翔太',
+    '{メッセージ}': '内見の件ですが、来週の土曜日は空いていますでしょうか？',
+    '{URL}': appBaseUrl ? `${appBaseUrl.replace(/\/$/, '')}/customers/abc123` : '',
+  }
 }
 
-export function GeneralForm({ initial }: { initial: GeneralSettings }) {
+export function GeneralForm({ initial, appBaseUrl }: { initial: GeneralSettings; appBaseUrl: string }) {
   const router = useRouter()
   const [s, setS] = useState<GeneralSettings>(initial)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const preview = previewValues(appBaseUrl)
 
   function setDay(day: DayKey, patch: Partial<DayHours>) {
     setS((prev) => ({
@@ -207,13 +217,18 @@ export function GeneralForm({ initial }: { initial: GeneralSettings }) {
 
         <div className="mt-3">
           <div className="mb-1 text-xs font-medium text-slate-600">届く見本</div>
+          {!appBaseUrl ? (
+            <p className="mb-1 text-xs text-orange-700">
+              サイトのURL（APP_BASE_URL）が未設定のため、通知に管理画面へのリンクが載りません。
+            </p>
+          ) : null}
           <pre className="whitespace-pre-wrap rounded-lg bg-slate-900 p-3 text-xs leading-relaxed text-slate-100">
             {renderNotificationTemplate(
               (s.notificationTemplate ?? '').trim() || DEFAULT_NOTIFICATION_TEMPLATE,
               {
-                ...PREVIEW_VALUES,
+                ...preview,
                 '{メッセージ}': s.includeMessageBodyInNotification
-                  ? PREVIEW_VALUES['{メッセージ}']!.slice(0, s.messageExcerptLength)
+                  ? preview['{メッセージ}']!.slice(0, s.messageExcerptLength)
                   : '',
               },
             )}
