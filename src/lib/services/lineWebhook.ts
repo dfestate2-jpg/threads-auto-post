@@ -12,6 +12,7 @@ import type { LineWebhookEvent } from '@/lib/line/types'
 import { env } from '@/lib/env'
 import { prisma } from '@/lib/prisma'
 import { recordInboundMessage, recordOutboundMessage } from './conversation'
+import { loadFollowUpContext, onCustomerInbound, type FollowUpContext } from './followUp'
 import { applyQuickAction } from './quickAction'
 import { consumeLinkCode, linkResultMessage } from './staffLink'
 import { groupIdMessage, groupWelcomeMessage, isGroupIdRequest } from '@/lib/domain/groupSetup'
@@ -74,6 +75,12 @@ async function resolveProfile(userId: string): Promise<{ displayName?: string | 
 
 /** 署名の検証に成功したチャネル。応答（reply）に使うトークンを選ぶために使う */
 export type ChannelKind = 'MAIN' | 'NOTIFY'
+
+/**
+ * 追客設定の遅延読み込み。
+ * 1リクエストに複数イベントが入るため、必要になったときに1回だけ読む。
+ */
+type FollowUpLoader = () => Promise<FollowUpContext>
 
 async function ack(event: LineWebhookEvent, channel: ChannelKind, text: string): Promise<void> {
   if (!event.replyToken) return
@@ -155,7 +162,12 @@ async function handleInternalChannelEvent(event: LineWebhookEvent): Promise<void
   if (message) await ack(event, 'NOTIFY', message)
 }
 
-async function handleEvent(event: LineWebhookEvent, channel: ChannelKind, ctx: PolicyContext): Promise<void> {
+async function handleEvent(
+  event: LineWebhookEvent,
+  channel: ChannelKind,
+  ctx: PolicyContext,
+  followUp: FollowUpLoader,
+): Promise<void> {
   // 社内グループからのボタン操作を受けるため、1対1トーク限定の判定より前に処理する
   if (event.type === 'postback') {
     await handlePostback(event, channel, ctx)
@@ -178,7 +190,7 @@ async function handleEvent(event: LineWebhookEvent, channel: ChannelKind, ctx: P
   switch (event.type) {
     case 'message': {
       if (!event.message) return
-      await recordInboundMessage(
+      const inbound = await recordInboundMessage(
         {
           lineUserId: userId,
           lineMessageId: event.message.id,
@@ -190,6 +202,14 @@ async function handleEvent(event: LineWebhookEvent, channel: ChannelKind, ctx: P
         },
         ctx,
       )
+      /**
+       * 顧客から返信が来た＝追客の状況が変わった。
+       * 「返信なし」「休眠」から復活させ、次回アクションを引き直すのはシステムの仕事で、
+       * 営業マンにステータスを触らせない。【指示書 4】
+       */
+      if (!inbound.duplicate) {
+        await onCustomerInbound(inbound.customerId, new Date(event.timestamp), await followUp())
+      }
       return
     }
     case 'follow': {
@@ -237,6 +257,7 @@ async function handleEvent(event: LineWebhookEvent, channel: ChannelKind, ctx: P
           raw: event as unknown,
         },
         ctx,
+        await followUp(),
       )
       return
     }
@@ -258,6 +279,10 @@ export async function processLineEvents(
   ctx: PolicyContext,
   now = Date.now(),
 ): Promise<void> {
+  let followUpContext: FollowUpContext | null = null
+  const getFollowUpContext = async (): Promise<FollowUpContext> =>
+    (followUpContext ??= await loadFollowUpContext(new Date(now)))
+
   for (const event of events) {
     try {
       if (Math.abs(now - event.timestamp) > MAX_CLOCK_SKEW_MS && !event.deliveryContext?.isRedelivery) {
@@ -281,7 +306,7 @@ export async function processLineEvents(
         }
       }
 
-      await handleEvent(event, channel, ctx)
+      await handleEvent(event, channel, ctx, getFollowUpContext)
 
       if (event.webhookEventId) {
         await prisma.webhookEvent

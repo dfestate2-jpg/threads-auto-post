@@ -227,7 +227,7 @@ async function processConversation(
 
   const bodyText = buildNotificationText({
     kind,
-    customerName: customer.name ?? customer.displayName ?? customer.lineUserId,
+    customerName: customer.name ?? customer.displayName ?? customer.lineUserId ?? '（名称未登録）',
     unrepliedMinutes: elapsedMinutes,
     totalUnrepliedMinutes,
     lastMessage: conversation.lastInboundText,
@@ -395,7 +395,7 @@ async function processConversation(
     },
     policy,
     digestEntry: {
-      customerName: customer.name ?? customer.displayName ?? customer.lineUserId,
+      customerName: customer.name ?? customer.displayName ?? customer.lineUserId ?? '（名称未登録）',
       totalUnrepliedMinutes,
       assigneeName: customer.assignee?.name ?? null,
     },
@@ -517,7 +517,7 @@ async function runWatchdog(ctx: PolicyContext, directory: NotifyDirectory, now: 
     const key = watchdogDedupeKey(conv.id, conv.firstUnrepliedAt, now)
     const body = buildNotificationText({
       kind: 'WATCHDOG',
-      customerName: conv.customer.name ?? conv.customer.displayName ?? conv.customer.lineUserId,
+      customerName: conv.customer.name ?? conv.customer.displayName ?? conv.customer.lineUserId ?? '（名称未登録）',
       unrepliedMinutes: diffMinutes(now, conv.awaitingSince),
       totalUnrepliedMinutes: diffMinutes(now, conv.firstUnrepliedAt),
       lastMessage: conv.lastInboundText,

@@ -1,8 +1,8 @@
 {
-  "name": "line-unreplied-reminder",
+  "name": "real-estate-followup-system",
   "version": "1.0.0",
   "private": true,
-  "description": "公式LINEの未返信を検知し社内LINEへリマインドするシステム",
+  "description": "不動産仲介の自動追客管理システム（公式LINE未返信リマインドを内包）",
   "engines": {
     "node": ">=20"
   },
@@ -19,7 +19,12 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "seed": "tsx prisma/seed.ts",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "seed:demo": "tsx scripts/demo-seed.ts",
+    "followups:run": "tsx scripts/run-followups.ts",
+    "check:followup": "tsx scripts/followup-check.ts",
+    "check:reminder": "tsx scripts/e2e-check.ts",
+    "check:stats": "tsx scripts/stats-check.ts"
   },
   "dependencies": {
     "@prisma/client": "6.2.1",

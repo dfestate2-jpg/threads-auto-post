@@ -148,14 +148,24 @@ export async function seedDefaultSystems(db: Db = prisma): Promise<number> {
   if ((await db.portalSystem.count()) > 0) return 0
   const defaults: (SystemInput & { sortOrder: number })[] = [
     {
-      name: 'リマインドシステム',
-      description: '公式LINEの未返信を検知して社内へリマインド',
-      icon: '🔔',
-      accent: 'emerald',
+      name: '追客管理',
+      description: '今日やるべき営業と、自動追客の進捗',
+      icon: '🎯',
+      accent: 'blue',
       url: '/',
       openInNewTab: false,
       published: true,
       sortOrder: 0,
+    },
+    {
+      name: 'リマインドシステム',
+      description: '公式LINEの未返信を検知して社内へリマインド',
+      icon: '🔔',
+      accent: 'emerald',
+      url: '/reminders',
+      openInNewTab: false,
+      published: true,
+      sortOrder: 10,
     },
   ]
   for (const d of defaults) {

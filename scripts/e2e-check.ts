@@ -15,6 +15,7 @@ import { ChannelPurpose, ChannelType, PrismaClient, ReplyState, ResolvedVia } fr
 
 import { DEFAULT_BUSINESS_HOURS } from '../src/lib/domain/businessHours'
 import { loadPolicyContext } from '../src/lib/services/context'
+import { loadFollowUpContext } from '../src/lib/services/followUp'
 import { recordInboundMessage, recordOutboundMessage } from '../src/lib/services/conversation'
 import { runReminderJob } from '../src/lib/services/reminderRunner'
 import { applyQuickAction } from '../src/lib/services/quickAction'
@@ -155,6 +156,7 @@ async function main(): Promise<void> {
     const out = await recordOutboundMessage(
       { customerId: customer.id, text: 'ご連絡ありがとうございます', sentAt: T_reply, source: 'ADMIN_CONSOLE', via: ResolvedVia.ADMIN_REPLY },
       await loadPolicyContext(T_reply),
+      await loadFollowUpContext(T_reply),
     )
     check('未返信状態が解消される', out.stillAwaiting === false)
     check('次回リマインドが取り消される', out.nextReminderAt === null)
@@ -645,6 +647,7 @@ async function main(): Promise<void> {
         via: ResolvedVia.ADMIN_REPLY,
       },
       await loadPolicyContext(T0),
+      await loadFollowUpContext(T0),
     )
     received.length = 0
     await runReminderJob(new Date(T0.getTime() + 200 * MIN))

@@ -1,8 +1,9 @@
-import { Direction, HandlingStatus, type Prisma, ReplyState, ResolvedVia } from '@prisma/client'
+import { Direction, FollowUpSource, HandlingStatus, type Prisma, ReplyState, ResolvedVia } from '@prisma/client'
 
 import { buildExcerpt } from '@/lib/domain/notificationText'
 import { computeNextReminderAt, isAwaitingReply } from '@/lib/domain/reminderSchedule'
 import { prisma } from '@/lib/prisma'
+import { applyOutboundFollowUp, type FollowUpContext } from './followUp'
 import { buildPolicy, type PolicyContext } from './policy'
 
 /** conversations に載せる最終メッセージ抜粋の保存長（通知時に更に短縮される） */
@@ -178,6 +179,19 @@ export interface OutboundInput {
   raw?: unknown
 }
 
+/**
+ * 返信の経路ごとの、追客履歴に残す記録。
+ * 「管理画面から送った」のか「LINE公式Managerで返信して対応済みにした」のかは
+ * 後から振り返るときに意味が違うので、経路をそのまま残す。
+ */
+const FOLLOW_UP_RECORD: Record<ResolvedVia, { source: FollowUpSource; result: string }> = {
+  ADMIN_REPLY: { source: FollowUpSource.ADMIN_REPLY, result: 'LINE送信（管理画面）' },
+  INGEST_API: { source: FollowUpSource.LINE_OUTBOUND, result: 'LINE送信（外部連携）' },
+  WEBHOOK: { source: FollowUpSource.LINE_OUTBOUND, result: 'LINE送信' },
+  MANUAL: { source: FollowUpSource.MANUAL, result: '対応済みにした' },
+  LINE_POSTBACK: { source: FollowUpSource.MANUAL, result: '対応済みにした（社内LINEのボタン）' },
+}
+
 export interface OutboundResult {
   conversationId: string
   /** 返信後も未返信が残っているか（返信より新しい顧客メッセージがある場合 true） */
@@ -194,7 +208,11 @@ export interface OutboundResult {
  *   ② 送信側が送信直前に同じ行をロックして未返信判定をやり直す
  * の二重で防いでいる。
  */
-export async function recordOutboundMessage(input: OutboundInput, ctx: PolicyContext): Promise<OutboundResult> {
+export async function recordOutboundMessage(
+  input: OutboundInput,
+  ctx: PolicyContext,
+  followUpCtx: FollowUpContext,
+): Promise<OutboundResult> {
   return prisma.$transaction(async (tx) => {
     const conversation =
       (await tx.conversation.findUnique({ where: { customerId: input.customerId } })) ??
@@ -246,6 +264,18 @@ export async function recordOutboundMessage(input: OutboundInput, ctx: PolicyCon
           version: { increment: 1 },
         },
       })
+      await applyOutboundFollowUp(
+        tx,
+        {
+          customerId: input.customerId,
+          at: input.sentAt,
+          staffId: input.sentByStaffId ?? null,
+          awaitingReplySince: null,
+          ...FOLLOW_UP_RECORD[input.via],
+          note: input.text?.slice(0, 200) ?? null,
+        },
+        followUpCtx,
+      )
       return { conversationId: conversation.id, stillAwaiting: false, nextReminderAt: null }
     }
 
@@ -289,6 +319,23 @@ export async function recordOutboundMessage(input: OutboundInput, ctx: PolicyCon
       },
     })
 
+    /**
+     * まだ顧客を待たせている。次回アクションは「返信する」のままにしておく必要があるため、
+     * 待たせ始めた時刻を渡す。
+     */
+    await applyOutboundFollowUp(
+      tx,
+      {
+        customerId: input.customerId,
+        at: input.sentAt,
+        staffId: input.sentByStaffId ?? null,
+        awaitingReplySince: firstUnrepliedAt,
+        ...FOLLOW_UP_RECORD[input.via],
+        note: input.text?.slice(0, 200) ?? null,
+      },
+      followUpCtx,
+    )
+
     return { conversationId: conversation.id, stillAwaiting: true, nextReminderAt: schedule.nextReminderAt }
   })
 }
@@ -302,6 +349,7 @@ export async function markResolvedManually(
   customerId: string,
   actor: { id: string | null; staffId: string | null },
   ctx: PolicyContext,
+  followUpCtx: FollowUpContext,
   note?: string,
 ): Promise<OutboundResult> {
   return recordOutboundMessage(
@@ -316,6 +364,7 @@ export async function markResolvedManually(
       resolvedById: actor.id,
     },
     ctx,
+    followUpCtx,
   )
 }
 

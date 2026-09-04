@@ -3,8 +3,10 @@ import Link from 'next/link'
 import { LogoutButton } from './LogoutButton'
 
 const NAV = [
-  { href: '/', label: 'ダッシュボード' },
-  { href: '/customers', label: '未返信一覧' },
+  { href: '/', label: '今日やること' },
+  { href: '/customers', label: '顧客' },
+  { href: '/reminders', label: '未返信' },
+  { href: '/admin', label: '管理者' },
   { href: '/settings', label: '設定' },
   // 他の業務システムへ戻れる入口。ここから行き来できないと、
   // ポータルを開き直すためにURLを打ち直すことになる
@@ -12,7 +14,7 @@ const NAV = [
 ]
 
 /**
- * 管理者はスマホとパソコンの両方から見る。
+ * 営業担当も管理者もスマホとパソコンの両方から見る。
  * ナビゲーションは指で押す前提のサイズ（高さ44px相当）にし、
  * 狭い画面ではタイトルの下に折り返して詰まらないようにする。
  */
@@ -22,7 +24,9 @@ export function AppShell({ children, alert }: { children: React.ReactNode; alert
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-7xl px-4">
           <div className="flex items-center justify-between gap-3 pt-3 sm:pt-4">
-            <span className="text-base font-bold sm:text-lg">公式LINE 未返信リマインド</span>
+            <Link href="/" className="text-base font-bold sm:text-lg">
+              追客管理
+            </Link>
             <LogoutButton />
           </div>
           <nav className="-mx-1 flex gap-1 overflow-x-auto pb-1 pt-2 sm:pt-3">

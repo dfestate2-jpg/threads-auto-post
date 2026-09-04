@@ -8,7 +8,8 @@ import { ElapsedBadge, formatDateTimeJa } from "./ui";
 export interface CustomerRow {
   customerId: string;
   name: string;
-  lineUserId: string;
+  /** LINE未連携の顧客（電話・ポータル経由の反響）は null になる */
+  lineUserId: string | null;
   assigneeId: string | null;
   assigneeName: string | null;
   lastInboundText: string | null;

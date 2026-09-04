@@ -7,6 +7,7 @@ import { safeEqual } from '@/lib/line/signature'
 import { prisma } from '@/lib/prisma'
 import { loadPolicyContext } from '@/lib/services/context'
 import { recordOutboundMessage } from '@/lib/services/conversation'
+import { loadFollowUpContext } from '@/lib/services/followUp'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -45,17 +46,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     : null
 
   const ctx = await loadPolicyContext()
+  const sentInstant = sentAt ? new Date(sentAt) : new Date()
   const result = await recordOutboundMessage(
     {
       customerId: customer.id,
       text: text ?? null,
-      sentAt: sentAt ? new Date(sentAt) : new Date(),
+      sentAt: sentInstant,
       sentByStaffId: staff?.id ?? null,
       lineMessageId: lineMessageId ?? null,
       source: 'INGEST_API',
       via: ResolvedVia.INGEST_API,
     },
     ctx,
+    await loadFollowUpContext(sentInstant),
   )
   return NextResponse.json({ ok: true, ...result })
 }

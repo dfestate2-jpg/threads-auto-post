@@ -88,3 +88,23 @@ export function formatElapsedJa(totalMinutes: number): string {
   if (days > 0) return hours > 0 ? `${days}日${hours}時間` : `${days}日`
   return mins > 0 ? `${hours}時間${mins}分` : `${hours}時間`
 }
+
+/** タイムゾーン基準の「その日の 00:00」 */
+export function startOfDayIn(timezone: string, instant: Date): Date {
+  return instantAtDayMinutes(dateKeyOf(instant, timezone), 0, timezone)
+}
+
+/** タイムゾーン基準の「その日の 23:59:59.999」 */
+export function endOfDayIn(timezone: string, instant: Date): Date {
+  return new Date(instantAtDayMinutes(dateKeyOf(instant, timezone), 1440, timezone).getTime() - 1)
+}
+
+/** 「8/31（月）」のような短い日付表現 */
+export function formatShortDateJa(instant: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('ja-JP', {
+    timeZone: timezone,
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+  }).format(instant)
+}
