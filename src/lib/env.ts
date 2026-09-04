@@ -80,6 +80,15 @@ export const env = {
   get fallbackWebhookUrl() {
     return optional('FALLBACK_WEBHOOK_URL')
   },
+  /**
+   * 受け取ったLINEのイベントを、もう1か所へそのまま流す先。
+   * 回答フォームの内容をお客様へ届ける別システムが、
+   * 「誰から届いたか」を知るために使う。
+   * 未設定なら何もしない（既定では転送しない）。
+   */
+  get relayFanoutUrl() {
+    return optional('LSTEP_RELAY_FANOUT_URL')
+  },
   get cronSecret() {
     return required('CRON_SECRET')
   },
