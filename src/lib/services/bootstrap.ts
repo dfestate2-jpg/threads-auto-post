@@ -9,6 +9,7 @@ import { Prisma, PrismaClient, StaffRole, UserRole } from '@prisma/client'
 
 import { hashPassword } from '@/lib/auth/password'
 import { DEFAULT_BUSINESS_HOURS } from '@/lib/domain/businessHours'
+import { seedDefaultSystems } from '@/lib/services/portal'
 
 /** 依頼の例：1時間→担当者 / 3時間→担当者＋責任者 / 6時間→管理者 */
 const DEFAULT_ESCALATION_RULES = [
@@ -64,6 +65,9 @@ export async function ensureBaselineData(db: Db): Promise<void> {
       update: { name },
     })
   }
+
+  // 業務システムポータルの初期カード（既に1件でもあれば何もしない）
+  await seedDefaultSystems(db)
 }
 
 export interface AdminInput {

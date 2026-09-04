@@ -6,6 +6,9 @@ const NAV = [
   { href: '/', label: 'ダッシュボード' },
   { href: '/customers', label: '未返信一覧' },
   { href: '/settings', label: '設定' },
+  // 他の業務システムへ戻れる入口。ここから行き来できないと、
+  // ポータルを開き直すためにURLを打ち直すことになる
+  { href: '/portal', label: '他のシステム' },
 ]
 
 /**
