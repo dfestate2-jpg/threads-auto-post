@@ -7,7 +7,7 @@ import { safeEqual } from '@/lib/line/signature'
 import { prisma } from '@/lib/prisma'
 import { loadPolicyContext } from '@/lib/services/context'
 import { recordOutboundMessage } from '@/lib/services/conversation'
-import { loadFollowUpContext, onStaffOutbound } from '@/lib/services/followUp'
+import { loadFollowUpContext } from '@/lib/services/followUp'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -58,8 +58,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       via: ResolvedVia.INGEST_API,
     },
     ctx,
+    await loadFollowUpContext(sentInstant),
   )
-  // 取り込んだ返信も追客の1手として記録する
-  await onStaffOutbound(customer.id, sentInstant, staff?.id ?? null, await loadFollowUpContext(sentInstant))
   return NextResponse.json({ ok: true, ...result })
 }

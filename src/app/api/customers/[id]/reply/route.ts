@@ -1,4 +1,4 @@
-import { FollowUpSource, ResolvedVia } from '@prisma/client'
+import { ResolvedVia } from '@prisma/client'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
@@ -9,7 +9,7 @@ import { LineApiError, pushTextMessage } from '@/lib/line/client'
 import { prisma } from '@/lib/prisma'
 import { loadPolicyContext } from '@/lib/services/context'
 import { recordOutboundMessage } from '@/lib/services/conversation'
-import { loadFollowUpContext, onStaffOutbound } from '@/lib/services/followUp'
+import { loadFollowUpContext } from '@/lib/services/followUp'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -61,13 +61,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         resolvedById: session.userId,
       },
       ctx,
+      await loadFollowUpContext(sentAt),
     )
-
-    // 送信は追客の1手でもある。追客履歴・次回アクションもここで自動更新する
-    await onStaffOutbound(id, sentAt, session.staffId, await loadFollowUpContext(sentAt), {
-      source: FollowUpSource.ADMIN_REPLY,
-      note: parsed.data.text.slice(0, 200),
-    })
 
     return NextResponse.json({ ok: true, ...result })
   } catch (e) {
