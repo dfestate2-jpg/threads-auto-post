@@ -92,17 +92,6 @@ export function isInternalUrl(url: string): boolean {
   return url.startsWith('/')
 }
 
-/** カードに小さく出す遷移先の表記。長いURLは出さず、どこへ行くかだけ伝える */
-export function displayHost(url: string): string {
-  // トップ（/）に「このサイト内 /」と出すと余計な記号が目に入るだけなので省く
-  if (isInternalUrl(url)) return url === '/' ? 'このサイト内' : `このサイト内 ${url}`
-  try {
-    return new URL(url).host
-  } catch {
-    return url
-  }
-}
-
 /** 表示名。空文字を保存させないための最終防衛 */
 export function normalizeName(raw: string): string | null {
   const value = raw.trim().replace(/\s+/g, ' ')

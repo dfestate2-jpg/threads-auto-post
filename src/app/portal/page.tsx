@@ -32,8 +32,8 @@ export default async function PortalHomePage() {
       isAdmin={isAdmin}
     >
       <div className="mb-6 sm:mb-8">
-        <h1 className="text-xl font-bold text-slate-900 sm:text-2xl">システム一覧</h1>
-        <p className="mt-1 text-sm text-slate-500">使いたいシステムを選んでください。</p>
+        <h1 className="text-xl font-bold tracking-[0.01em] text-slate-900 sm:text-2xl">システム一覧</h1>
+        <p className="mt-1.5 text-sm leading-relaxed text-slate-500">使いたいシステムを選んでください。</p>
       </div>
 
       {systems.length > 0 ? (

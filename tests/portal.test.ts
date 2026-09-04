@@ -7,7 +7,6 @@ import {
   accentOf,
   assignSortOrders,
   canAccess,
-  displayHost,
   isInternalUrl,
   moveInOrder,
   nextSortOrder,
@@ -56,17 +55,11 @@ describe('normalizeSystemUrl', () => {
   })
 })
 
-describe('isInternalUrl / displayHost', () => {
+describe('isInternalUrl', () => {
   it('サイト内リンクを見分ける', () => {
     expect(isInternalUrl('/customers')).toBe(true)
+    expect(isInternalUrl('/')).toBe(true)
     expect(isInternalUrl('https://example.com')).toBe(false)
-  })
-
-  it('カードにはホスト名だけを出す', () => {
-    expect(displayHost('https://example.com/a/b?c=1')).toBe('example.com')
-    expect(displayHost('/customers')).toBe('このサイト内 /customers')
-    // トップは記号だけが残らないようにする
-    expect(displayHost('/')).toBe('このサイト内')
   })
 })
 

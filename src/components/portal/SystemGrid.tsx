@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import type { PortalSystem } from '@prisma/client'
 
-import { accentOf, displayHost, isInternalUrl } from '@/lib/domain/portal'
+import { accentOf, isInternalUrl } from '@/lib/domain/portal'
 
 /**
  * システム一覧。スマホのホーム画面のように「アプリを選ぶ」感覚で押せる形にする。
@@ -24,37 +24,39 @@ export function SystemGrid({ systems }: { systems: PortalSystem[] }) {
 function SystemCard({ system }: { system: PortalSystem }) {
   const accent = accentOf(system.accent)
   const className = [
-    'group flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition',
+    'group relative flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition',
     'hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:shadow-sm sm:p-5',
     accent.ring,
   ].join(' ')
 
   const body = (
     <>
+      {/*
+        別タブで開く印。ドメイン名を1行使って出すよりも、
+        角の小さな記号のほうがカードの字組みを乱さない。
+      */}
+      {system.openInNewTab ? (
+        <span className="absolute right-3 top-3 text-xs text-slate-300 transition group-hover:text-slate-400" aria-hidden>
+          ↗
+        </span>
+      ) : null}
+
       <span
         className={`mb-3 flex h-12 w-12 items-center justify-center rounded-xl text-2xl transition group-hover:scale-105 sm:h-14 sm:w-14 sm:text-[28px] ${accent.tile}`}
         aria-hidden
       >
         {system.icon}
       </span>
-      <span className="block break-words text-[15px] font-bold leading-snug text-slate-900 sm:text-base">
+
+      <span className="block break-words text-[15px] font-bold leading-snug tracking-[0.01em] text-slate-900 sm:text-base">
         {system.name}
       </span>
       {system.description ? (
-        <span className="mt-1 block break-words text-xs leading-relaxed text-slate-500 sm:text-[13px]">
+        <span className="mt-1.5 block break-words text-xs leading-relaxed text-slate-500 sm:text-[13px]">
           {system.description}
         </span>
       ) : null}
-      {/*
-        ドメイン名は途中で改行できないため、狭い画面ではカードからはみ出して
-        ページ全体が横スクロールしてしまう。ここは補足情報なので、
-        収まらない分は省略してレイアウトを優先する。
-      */}
-      <span className="mt-auto flex items-center gap-1 pt-3 text-[11px] text-slate-400">
-        <span className="min-w-0 truncate">{displayHost(system.url)}</span>
-        {/* 別タブで開く印は、ドメイン名を省略しても残るように外に出す */}
-        {system.openInNewTab ? <span aria-hidden>↗</span> : null}
-      </span>
+      {system.openInNewTab ? <span className="sr-only">（別のタブで開きます）</span> : null}
     </>
   )
 
