@@ -56,7 +56,7 @@ export default async function SettingsPage() {
       <div className="space-y-6">
         {/* 入口が動いているかは最優先で目に入るべきなので先頭に置く */}
         <RelayReceiptTable rows={receipts} timezone={settings.timezone} />
-        <GeneralForm initial={general} />
+        <GeneralForm initial={general} appBaseUrl={env.appBaseUrl} />
         <EscalationForm
           initial={rules.map((r) => ({
             id: r.id,

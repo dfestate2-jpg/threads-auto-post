@@ -681,3 +681,41 @@ model MessageTemplate {
   @@index([status, enabled])
   @@map("message_templates")
 }
+
+// ---------------------------------------------------------------------------
+// 業務システムポータル
+// ---------------------------------------------------------------------------
+
+/// ポータルのトップページに並べる業務システム 1 件。
+///
+/// 設計上の要点は「遷移先URLをコードに書かない」こと。
+/// 各システムの引っ越しやドメイン変更のたびにデプロイし直すのは現実的でないため、
+/// URL・アイコン・説明・表示順・公開状態はすべてこの表で管理し、
+/// 管理画面から変更したら次の表示から反映されるようにしている。
+///
+/// 新しいシステムが増えてもコード修正は不要（行を足すだけ）。
+model PortalSystem {
+  id          String  @id @default(cuid())
+  name        String
+  /// カードに大きく出すアイコン（絵文字）
+  icon        String  @default("🔗")
+  /// カードの色。Tailwind のクラス名はコード側の対応表で解決する
+  accent      String  @default("slate")
+  description String?
+  /// 遷移先。https:// の絶対URL、または同一サイト内の /path
+  url         String
+  /// 別タブで開くか（外部システムは既定で別タブ）
+  openInNewTab Boolean @default(true)
+  /// 表示順。小さいほど先に出る
+  sortOrder   Int      @default(0)
+  /// 非公開にするとトップページから消える（削除ではないので後から戻せる）
+  published   Boolean  @default(true)
+  /// このシステムを開ける最低権限。将来のシステム別アクセス権限の土台
+  minRole     UserRole @default(STAFF)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([published, sortOrder])
+  @@map("portal_systems")
+}
