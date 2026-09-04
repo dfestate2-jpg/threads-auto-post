@@ -31,8 +31,15 @@ export function RowSelect({
   customerId: string
   value: string
   options: RowSelectOption[]
-  /** 楽観ロック用。同時操作の上書きを防ぐ */
-  version: number
+  /**
+   * 楽観ロック用。同時操作の上書きを防ぐ。
+   *
+   * LINE を使っていない顧客（電話・ポータル経由の反響）には会話が無く、
+   * 突き合わせる version が存在しない。そこは null を渡して照合を省く。
+   * **0 を代わりに送ってはいけない** — 会話の version は 0 から始まるので、
+   * 実際には古い画面を見ているのに照合が通ってしまう。
+   */
+  version: number | null
   ariaLabel: string
   /** 選択中の値に応じた配色。一覧で状態を色で判別できるようにする */
   tone?: (value: string) => string
@@ -58,7 +65,7 @@ export function RowSelect({
       const res = await fetch(`/api/customers/${customerId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...buildPayload(next), version }),
+        body: JSON.stringify({ ...buildPayload(next), ...(version === null ? {} : { version }) }),
       })
       if (!res.ok) {
         // 失敗したのに変わったように見せない。誰かが同時に触った場合もここに来る
