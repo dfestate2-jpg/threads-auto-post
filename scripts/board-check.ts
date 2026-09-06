@@ -414,6 +414,59 @@ async function main(): Promise<void> {
     check('未来のタスクは今日やることに出さない', stillLeft === 1)
   }
 
+  console.log('\n⑰ 追客終了を押すまで、何度でも今日やることに戻ってくる')
+  {
+    // 実際に設定されている数値そのもの（末尾に end が無い＝打ち切らない）
+    await prisma.boardSettings.update({
+      where: { id: 'singleton' },
+      data: {
+        angle5Ladder: '2,5,8,11,14',
+        angle4Ladder: '3,6,9,12,15',
+        angle3Ladder: '4,7,10,16',
+        angle2Ladder: '5,10,15,20',
+        angle1Ladder: 'off',
+      },
+    })
+    const live = await loadBoardContext(ctx.now)
+
+    const c = await prisma.customer.create({ data: { name: '長期 追客子', assigneeId: staff.id } })
+    const first = await setAngle({ customerId: c.id, angle: 5, staffId: staff.id }, live)
+    check('角度5は2日後', daysFromNow(live, first.dueAt) === 2, { d: daysFromNow(live, first.dueAt) })
+
+    const entry = await prisma.boardEntry.findUniqueOrThrow({ where: { customerId: c.id } })
+
+    // つながらないを重ねても、打ち切られずに間隔が空いていくだけ
+    const spans: (number | null)[] = []
+    for (let i = 0; i < 6; i += 1) {
+      const r = await actNoAnswer(entry.id, staff.id, live)
+      spans.push(daysFromNow(live, r.dueAt))
+    }
+    check('反応が無いほど間隔が空く（5→8→11→14）', JSON.stringify(spans.slice(0, 4)) === '[5,8,11,14]', spans)
+    check('使い切っても打ち切らず、14日おきで回り続ける', spans[4] === 14 && spans[5] === 14, spans)
+
+    const afterMany = await prisma.boardEntry.findUniqueOrThrow({ where: { id: entry.id } })
+    check('**6回追っても自動終了しない**', afterMany.endedAt === null)
+    check('次回追客日が必ず入っている（消えない）', afterMany.dueAt !== null)
+
+    // 対応済みにしても終わらない。次回がまた入る
+    const back = await setAngle({ customerId: c.id, angle: 5, staffId: staff.id }, live)
+    check('対応済みにすると2日後に戻る（一度で終わらない）', daysFromNow(live, back.dueAt) === 2)
+    const afterDone = await prisma.boardEntry.findUniqueOrThrow({ where: { id: entry.id } })
+    check('対応済みでは終了扱いにならない', afterDone.endedAt === null)
+
+    // 終わらせられるのは「追客終了」を押したときだけ
+    await actEnd(entry.id, BoardOutcome.LOST_OTHER, staff.id, live)
+    const ended = await prisma.boardEntry.findUniqueOrThrow({ where: { id: entry.id } })
+    check('追客終了を押して初めて終わる', ended.endedAt !== null)
+    check('他社で契約した、として残る', ended.endedOutcome === BoardOutcome.LOST_OTHER)
+    check('次回追客日が消える＝今日やることに出なくなる', ended.dueAt === null)
+
+    const stillDue = await prisma.boardEntry.count({
+      where: { id: entry.id, endedAt: null, dueAt: { not: null } },
+    })
+    check('通知の対象からも外れる', stillDue === 0)
+  }
+
   console.log(failures === 0 ? '\n✅ 全項目 合格' : `\n❌ ${failures}件 失敗`)
   await prisma.$disconnect()
   process.exit(failures === 0 ? 0 : 1)

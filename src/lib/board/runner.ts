@@ -82,7 +82,7 @@ export function buildBody(entry: DueEntry, ctx: BoardContext): string {
 /** 3つのボタン。リンクが作れない環境ではボタン無しで本文だけ送る */
 export function buildActions(entryId: string, now: Date): BoardLinkAction[] {
   const specs: { label: string; kind: 'called' | 'noanswer' | 'end' }[] = [
-    { label: '電話した', kind: 'called' },
+    { label: '対応済み', kind: 'called' },
     { label: 'つながらない', kind: 'noanswer' },
     { label: '追客終了', kind: 'end' },
   ]
