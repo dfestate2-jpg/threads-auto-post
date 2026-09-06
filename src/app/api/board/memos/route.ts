@@ -23,7 +23,7 @@ const schema = z.object({
   dueOverride: z.string().datetime().nullable().optional(),
 })
 
-/** 通話メモを登録する。角度から次回追客日が自動で決まる */
+/** ヒアリングシートを登録する。角度から次回追客日が自動で決まる */
 export async function POST(request: Request): Promise<NextResponse> {
   try {
     const session = await requireApiSession('STAFF')

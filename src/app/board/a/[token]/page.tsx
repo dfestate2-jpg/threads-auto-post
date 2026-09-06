@@ -46,8 +46,15 @@ export default async function BoardActionPage({ params }: { params: Promise<{ to
   const entry = await prisma.boardEntry.findUnique({
     where: { id: action.entryId },
     include: {
-      customer: { select: { id: true, name: true, displayName: true, phone: true } },
-      assignee: { select: { name: true } },
+      customer: {
+        select: {
+          id: true,
+          name: true,
+          displayName: true,
+          phone: true,
+          assignee: { select: { name: true } },
+        },
+      },
     },
   })
 
@@ -87,7 +94,9 @@ export default async function BoardActionPage({ params }: { params: Promise<{ to
               角度{entry.angle}・{ANGLE_LABEL[entry.angle]}
             </span>
           ) : null}
-          {entry.assignee ? <span className="text-xs text-slate-500">{entry.assignee.name}</span> : null}
+          {entry.customer.assignee ? (
+            <span className="text-xs text-slate-500">{entry.customer.assignee.name}</span>
+          ) : null}
         </div>
 
         <h1 className="text-xl font-bold">{name} 様</h1>

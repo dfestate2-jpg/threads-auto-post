@@ -11,9 +11,9 @@
  */
 import { BoardEventType, BoardOutcome, PrismaClient } from '@prisma/client'
 
-import { dateKeyOf, instantAtDayMinutes } from '../src/lib/domain/time'
+import { dateKeyOf, instantAtDayMinutes, shiftDateKey } from '../src/lib/domain/time'
 import { overdueDays } from '../src/lib/board/ladder'
-import { actEnd, actNoAnswer, addCallMemo, setAngle } from '../src/lib/board/service'
+import { actEnd, actNoAnswer, addCallMemo, setAngle, setBoardAssignee } from '../src/lib/board/service'
 import { loadBoardContext, type BoardContext } from '../src/lib/board/settings'
 import { buildActions, buildBody } from '../src/lib/board/runner'
 import { buildBoardToken, parseBoardToken } from '../src/lib/board/token'
@@ -37,6 +37,7 @@ function check(label: string, ok: boolean, detail?: unknown): void {
 
 async function reset(): Promise<void> {
   await prisma.$transaction([
+    prisma.boardTask.deleteMany(),
     prisma.boardEvent.deleteMany(),
     prisma.boardCallMemo.deleteMany(),
     prisma.boardEntry.deleteMany(),
@@ -277,8 +278,15 @@ async function main(): Promise<void> {
     const entry = await prisma.boardEntry.findUniqueOrThrow({
       where: { customerId: c.id },
       include: {
-        customer: { select: { id: true, name: true, displayName: true, phone: true } },
-        assignee: { select: { id: true, name: true, lineUserId: true, notifyEnabled: true } },
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true,
+            phone: true,
+            assignee: { select: { id: true, name: true, lineUserId: true, notifyEnabled: true } },
+          },
+        },
       },
     })
     await prisma.boardEntry.update({
@@ -319,7 +327,7 @@ async function main(): Promise<void> {
     check('20日後には期限切れになる', parseBoardToken(token, old) === null)
   }
 
-  console.log('\n⑭ リマインドシステムに書き込んでいない')
+  console.log('\n⑭ リマインドのテーブルに書き込んでいない（顧客は担当だけ書く）')
   {
     const convs = await prisma.conversation.count()
     const reminders = await prisma.reminder.count()
@@ -328,9 +336,82 @@ async function main(): Promise<void> {
     check('リマインドを作っていない', reminders === 0, { reminders })
     check('メッセージを作っていない', messages === 0, { messages })
 
-    // 追客側が Customer の追客カラムを触っていないこと
-    const touched = await prisma.customer.count({ where: { nextActionAt: { not: null } } })
-    check('顧客の旧・追客カラムを書き換えていない', touched === 0, { touched })
+    // 顧客に書くのは担当（assigneeId）だけ。旧・追客の列には触らない
+    const touched = await prisma.customer.count({
+      where: { OR: [{ nextActionAt: { not: null } }, { lastContactAt: { not: null } }, { followUpStep: { not: 0 } }] },
+    })
+    check('顧客の旧・追客カラムは書き換えない（担当だけ書く）', touched === 0, { touched })
+  }
+
+  console.log('\n⑮ 追客の担当と顧客の担当は同じ人（持ち場所が1つしかない）')
+  {
+    const other = await prisma.staff.create({ data: { name: '舛谷', active: true } })
+    const c = await prisma.customer.create({ data: { name: '引き継ぎ 太郎', assigneeId: staff.id } })
+    const first = await setAngle({ customerId: c.id, angle: 4, staffId: staff.id }, ctx)
+
+    await setBoardAssignee({ customerId: c.id, assigneeId: other.id, staffId: staff.id }, ctx)
+
+    const customer = await prisma.customer.findUniqueOrThrow({ where: { id: c.id } })
+    check('顧客の担当が変わる', customer.assigneeId === other.id)
+
+    const after = await prisma.boardEntry.findUniqueOrThrow({ where: { customerId: c.id } })
+    check('次回追客日はずれない（引き継ぎで追客が後ろへ流れない）', after.dueAt?.getTime() === first.dueAt?.getTime())
+
+    // 追客側に担当の列が無いこと自体が、食い違いようがない証拠になる
+    check('追客側は担当を持たない（食い違いようがない）', !('assigneeId' in after))
+
+    // ヒアリングシートで担当を選んでも、同じ1か所に入る
+    const c2 = await prisma.customer.create({ data: { name: 'シート 花子' } })
+    await addCallMemo(
+      { customerId: c2.id, calledOn: ctx.now, staffId: other.id, angle: 3, createdById: null },
+      ctx,
+    )
+    const c2after = await prisma.customer.findUniqueOrThrow({ where: { id: c2.id } })
+    check('シートで選んだ担当が顧客の担当になる', c2after.assigneeId === other.id)
+  }
+
+  console.log('\n⑯ 顧客と関係のない自分のタスク')
+  {
+    const todayKey = dateKeyOf(ctx.now, TZ)
+    const task = await prisma.boardTask.create({
+      data: { title: '鍵を管理会社に返す', dueOn: instantAtDayMinutes(todayKey, 0, TZ), staffId: staff.id },
+    })
+    check('顧客に紐づかないタスクを作れる', task.title === '鍵を管理会社に返す')
+
+    const endOfToday = instantAtDayMinutes(todayKey, 1440, TZ)
+    const todays = await prisma.boardTask.count({
+      where: { staffId: staff.id, doneAt: null, dueOn: { lt: endOfToday } },
+    })
+    check('今日ぶんとして出る', todays === 1)
+
+    // 3日前の期限で、まだ済んでいないもの
+    const old = await prisma.boardTask.create({
+      data: {
+        title: '役所へ電話',
+        dueOn: instantAtDayMinutes(shiftDateKey(todayKey, -3), 0, TZ),
+        staffId: staff.id,
+      },
+    })
+    const carried = await prisma.boardTask.count({
+      where: { staffId: staff.id, doneAt: null, dueOn: { lt: endOfToday } },
+    })
+    check('期限を過ぎたタスクも消えず繰り越される', carried === 2)
+    check('過ぎた日数が出せる', overdueDays(old.dueOn, ctx.now, TZ) === 3)
+
+    await prisma.boardTask.update({ where: { id: task.id }, data: { doneAt: ctx.now } })
+    const left = await prisma.boardTask.count({
+      where: { staffId: staff.id, doneAt: null, dueOn: { lt: endOfToday } },
+    })
+    check('済みにすると残りから外れる', left === 1)
+
+    // 未来のタスクは今日やることに出さない
+    await prisma.boardTask.create({
+      data: { title: '来週の内見準備', dueOn: instantAtDayMinutes(shiftDateKey(todayKey, 5), 0, TZ), staffId: staff.id },
+    })
+    const stillLeft = await prisma.boardTask.count({
+      where: { staffId: staff.id, doneAt: null, dueOn: { lt: endOfToday } },
+    })
+    check('未来のタスクは今日やることに出さない', stillLeft === 1)
   }
 
   console.log(failures === 0 ? '\n✅ 全項目 合格' : `\n❌ ${failures}件 失敗`)

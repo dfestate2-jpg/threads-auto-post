@@ -10,7 +10,7 @@ import { prisma, withReadRetry } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
 
-/** 通話メモの入力。電話が終わったらここに来る */
+/** ヒアリングシートの入力。接客や電話が終わったらここに来る */
 export default async function BoardPage() {
   const session = await requirePageSession()
   const ctx = await loadBoardContext()
@@ -29,7 +29,7 @@ export default async function BoardPage() {
   return (
     <AppShell>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-bold">通話メモ</h1>
+        <h1 className="text-xl font-bold">ヒアリングシート</h1>
         <div className="flex gap-2 text-sm">
           <Link href="/board/today" className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-slate-600">
             今日やること

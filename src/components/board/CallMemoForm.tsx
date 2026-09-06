@@ -18,7 +18,7 @@ export interface CustomerOption {
 }
 
 /**
- * 通話メモ。電話が終わって30秒で終わることを最優先にしてある。
+ * ヒアリングシート。接客や電話が終わって30秒で終わることを最優先にしてある。
  *
  * 期限を入力させないのが一番の変更点。角度を選んだ時点で次回追客日が決まり、
  * 「いつ通知するか」がその場に出る。前のボードで「期限なし」ばかりになったのは、
@@ -137,7 +137,7 @@ export function CallMemoForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium text-slate-700" htmlFor="cm-date">
-            電話した日
+            対応した日
           </label>
           <input
             id="cm-date"

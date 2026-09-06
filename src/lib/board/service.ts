@@ -1,7 +1,7 @@
 /**
  * 追客ボードの操作。
  *
- * 状態を変えるのはここだけ。入口は3つあるが（通話メモ・一覧の角度・LINEのボタン）、
+ * 状態を変えるのはここだけ。入口は3つあるが（ヒアリングシート・一覧の角度・LINEのボタン）、
  * **次回追客日を決める処理は1か所に集めてある**。散らばると、片方だけ直して
  * もう片方が古い動きのまま残る。前のシステムで実際に起きた事故なので繰り返さない。
  *
@@ -18,15 +18,15 @@ import type { BoardContext } from './settings'
 /** トランザクションの中でも外でも使えるようにするための型 */
 type Db = Prisma.TransactionClient | typeof prisma
 
-/** 追客を始めるとき、その顧客の行がまだ無ければ作る */
+/**
+ * 追客を始めるとき、その顧客の行がまだ無ければ作る。
+ *
+ * 担当者はここに持たない。顧客の担当（Customer.assigneeId）ただ1つが正。
+ */
 export async function ensureEntry(db: Db, customerId: string): Promise<BoardEntry> {
   const existing = await db.boardEntry.findUnique({ where: { customerId } })
   if (existing) return existing
-
-  // 追客の担当は、顧客に付いている担当を初期値にする。
-  // 未設定なら未設定のまま（勝手に誰かへ割り当てない）
-  const customer = await db.customer.findUnique({ where: { id: customerId }, select: { assigneeId: true } })
-  return db.boardEntry.create({ data: { customerId, assigneeId: customer?.assigneeId ?? null } })
+  return db.boardEntry.create({ data: { customerId } })
 }
 
 /**
@@ -157,7 +157,7 @@ export async function setAngle(input: SetAngleInput, ctx: BoardContext): Promise
 }
 
 // ---------------------------------------------------------------------------
-// 入口②　通話メモ
+// 入口②　ヒアリングシート
 // ---------------------------------------------------------------------------
 
 export interface CallMemoInput {
@@ -178,7 +178,7 @@ export interface CallMemoResult {
   ended: boolean
 }
 
-/** 電話のあと、通話メモを登録する。角度から次回追客日が自動で決まる */
+/** 接客や電話のあと、ヒアリングシートを登録する。角度から次回追客日が自動で決まる */
 export async function addCallMemo(input: CallMemoInput, ctx: BoardContext): Promise<CallMemoResult> {
   return prisma.$transaction(async (tx) => {
     const entry = await ensureEntry(tx, input.customerId)
@@ -191,8 +191,13 @@ export async function addCallMemo(input: CallMemoInput, ctx: BoardContext): Prom
       endedAt: null,
       endedOutcome: null,
       notifiedOn: null,
-      ...(input.staffId ? { assignee: { connect: { id: input.staffId } } } : {}),
     })
+
+    // シートで担当を選んだら、それが顧客の担当になる。
+    // 追客の担当と顧客の担当は同じ人、という前提を1か所で守る
+    if (input.staffId) {
+      await tx.customer.update({ where: { id: input.customerId }, data: { assigneeId: input.staffId } })
+    }
 
     // 手で期限を上書きした場合は、自動計算のあとで差し替える。
     // 計算を飛ばさずに一度通すのは、上書きを外したときに自動へ戻せるようにするため
@@ -217,7 +222,7 @@ export async function addCallMemo(input: CallMemoInput, ctx: BoardContext): Prom
       angleBefore: before,
       angleAfter: input.angle,
       staffId: input.staffId,
-      detail: '通話メモを登録',
+      detail: 'ヒアリングシートを登録',
       at: ctx.now,
     })
 
@@ -334,5 +339,48 @@ export async function markNotified(entryId: string, ctx: BoardContext): Promise<
   await prisma.boardEntry.update({
     where: { id: entryId },
     data: { notifiedOn: dateKeyOf(ctx.now, ctx.timezone) },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 担当者
+// ---------------------------------------------------------------------------
+
+export interface SetAssigneeInput {
+  customerId: string
+  /** null で担当なし */
+  assigneeId: string | null
+  /** 操作した人 */
+  staffId: string | null
+}
+
+/**
+ * 担当者を変える。
+ *
+ * 追客の担当と顧客の担当は**同じ人**なので、書く先は顧客の1か所だけ。
+ * 2か所に持って同期させる形にすると、いつか必ず食い違う。
+ *
+ * これは**リマインドの通知先も同時に変わる**ということでもある。
+ * それでよい——1人のお客さまを担当するのは1人、というのが前提だから。
+ *
+ * リマインドの予定（nextReminderAt）は引き直さない。
+ * 予定の計算は会話の状態と顧客ごとの通知間隔だけで決まり、担当者に依存しない。
+ * 送信時に担当者を読み直すので、次のリマインドは自動的に新しい担当者へ届く。
+ *
+ * 次回追客日にも触らない。引き継ぐたびに予定が後ろへ流れると、
+ * 引き継いだ案件ほど追客が遅れることになる。
+ */
+export async function setBoardAssignee(input: SetAssigneeInput, ctx: BoardContext): Promise<BoardEntry> {
+  return prisma.$transaction(async (tx) => {
+    const entry = await ensureEntry(tx, input.customerId)
+    await tx.customer.update({ where: { id: input.customerId }, data: { assigneeId: input.assigneeId } })
+    await logEvent(tx, entry.id, BoardEventType.ANGLE_SET, {
+      angleBefore: entry.angle,
+      angleAfter: entry.angle,
+      staffId: input.staffId,
+      detail: input.assigneeId === null ? '担当を外した' : '担当を変えた',
+      at: ctx.now,
+    })
+    return entry
   })
 }

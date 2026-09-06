@@ -5,7 +5,7 @@ import { LogoutButton } from './LogoutButton'
 const NAV = [
   // 追客ボード。営業が毎日触るのはこの3つだけ
   { href: '/board/today', label: '今日やること' },
-  { href: '/board', label: '通話メモ' },
+  { href: '/board', label: 'ヒアリングシート' },
   { href: '/board/list', label: '追客一覧' },
   // ここから下はリマインドシステム側。触っていない
   { href: '/reminders', label: '未返信' },

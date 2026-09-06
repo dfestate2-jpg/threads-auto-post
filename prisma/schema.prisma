@@ -122,7 +122,7 @@ model Staff {
   updatedAt     DateTime  @updatedAt
 
   customers    Customer[]
-  boardEntries BoardEntry[]    @relation("BoardAssignee")
+  boardTasks   BoardTask[]     @relation("BoardTaskOwner")
   sentMessages Message[]
   users        User[]
   linkCodes    StaffLinkCode[]
@@ -781,7 +781,7 @@ enum BoardOutcome {
 enum BoardEventType {
   /// 角度を付けた・変えた
   ANGLE_SET
-  /// 通話メモを登録した
+  /// ヒアリングシートを登録した
   CALL_MEMO
   /// 電話した
   CALLED
@@ -794,23 +794,23 @@ enum BoardEventType {
 }
 
 /// 顧客1人ぶんの追客状態。角度と次回追客日だけを持つ。
+///
+/// **担当者はここに持たない。** 顧客の担当（Customer.assigneeId）ただ1つが正で、
+/// 追客の担当と顧客の担当は常に同じ人になる。
+/// 「常に同じはず」の値を2か所に持つと、いつか必ず食い違う。
 model BoardEntry {
   id         String   @id @default(cuid())
   customerId String   @unique
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   /// 熱意角度 1〜5。null = まだ判断していない（拾い上げの候補）
-  angle      Int?
-  /// 追客の担当者。顧客の担当とは別に持つ（引き継いでも顧客側を書き換えないため）
-  assigneeId String?
-  assignee   Staff?  @relation("BoardAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-
+  angle          Int?
   /// 次回追客の通知時刻。null = 追客しない（角度なし / 角度1 / 終了済み）
   dueAt          DateTime?
   /// 反応がないまま繰り返した回数。間隔を空けるのに使う
   noAnswerStreak Int       @default(0)
 
-  /// 直近の通話メモから引き継いだ、通知本文に出す内容
+  /// 直近のヒアリングシートから引き継いだ、通知本文に出す内容
   customerTask String?
   staffTask    String?
 
@@ -830,13 +830,16 @@ model BoardEntry {
 
   /// Cron が期限到来分を引くための索引
   @@index([dueAt])
-  @@index([assigneeId, dueAt])
   @@index([angle])
   @@index([endedAt])
   @@map("board_entries")
 }
 
-/// 通話メモ。1顧客に何件でも残る
+/// ヒアリングシート。1顧客に何件でも残る。
+///
+/// 画面上の名前は「ヒアリングシート」。テーブル名を board_call_memos のままに
+/// してあるのは、名前を揃えるためだけに移行を走らせても利点が無く、
+/// 失敗したときの損失だけが増えるため。**画面の名前が正**で、ここはその置き場所。
 model BoardCallMemo {
   id      String     @id @default(cuid())
   entryId String
@@ -914,4 +917,30 @@ model BoardSettings {
   updatedAt DateTime @updatedAt
 
   @@map("board_settings")
+}
+
+/// 顧客と関係のない、自分の予定。
+///
+/// 「今日やること」が追客だけだと、結局それ以外を別の場所（頭・付箋・LINE）で
+/// 管理することになり、**今日やることが今日やること全部にならない。**
+/// 見る場所が2つに割れた時点で、片方は必ず見られなくなる。
+model BoardTask {
+  id      String  @id @default(cuid())
+  /// 誰のタスクか。null は「担当なし」で、全員の画面に出る
+  staffId String?
+  staff   Staff?  @relation("BoardTaskOwner", fields: [staffId], references: [id], onDelete: SetNull)
+
+  title String
+
+  /// いつやるか（Asia/Tokyo のその日の0時）。過ぎても消えず、繰り越して出る
+  dueOn  DateTime
+  doneAt DateTime?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([staffId, dueOn])
+  @@index([doneAt])
+  @@map("board_tasks")
 }
