@@ -106,7 +106,7 @@ export function TodayActions({
 
   async function onEnd(outcome: string, label: string): Promise<void> {
     const body = await send({ action: 'end', outcome })
-    if (body) finish(`追客を終了しました（${label}）。今日やることから外れます`)
+    if (body) finish(`追客を終了しました（${label}）。今日やることと顧客一覧の両方から外れます`)
   }
 
   if (step === 'done') {
@@ -172,7 +172,10 @@ export function TodayActions({
             やめる
           </button>
         </div>
-        <p className="text-[11px] text-slate-500">終了すると、今日やることにもLINEにも出なくなります。</p>
+        <p className="text-[11px] text-slate-500">
+          終了すると、今日やることにもLINEにも出なくなります。顧客一覧のステータスも
+          「うちで契約」なら成約、それ以外は失注に変わり、未返信リマインドの対象からも外れます。
+        </p>
         {error ? <p className="text-xs text-red-600">{error}</p> : null}
       </div>
     )
