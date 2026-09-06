@@ -75,7 +75,7 @@ export function aggregateRetail(
 
   const sources = ok.map((r) => r.data.meta.source);
   // 履歴と変化量は代表 1 社 (最初に取得できた Provider) のものを使う
-  const primary = ok[0].data;
+  const primary = ok[0]!.data;
   const longPercent = Math.round(ok.reduce((sum, r) => sum + r.data.longPercent, 0) / ok.length);
   const newest = ok.reduce((a, b) => (a.data.meta.updatedAt > b.data.meta.updatedAt ? a : b)).data;
 

@@ -81,10 +81,10 @@ describe("CFTC 建玉報告の解析", () => {
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.weeks).toHaveLength(3);
-    expect(parsed.weeks[0].reportDate).toBe("2026-08-11T00:00:00.000Z");
-    expect(parsed.weeks[2].reportDate).toBe("2026-08-25T00:00:00.000Z");
-    expect(parsed.weeks[2].netPosition).toBe(42_500);
-    expect(parsed.weeks[1].netPosition).toBe(37_800);
+    expect(parsed.weeks[0]!.reportDate).toBe("2026-08-11T00:00:00.000Z");
+    expect(parsed.weeks[2]!.reportDate).toBe("2026-08-25T00:00:00.000Z");
+    expect(parsed.weeks[2]!.netPosition).toBe(42_500);
+    expect(parsed.weeks[1]!.netPosition).toBe(37_800);
   });
 
   it("フィールド名が想定と違えば、どのフィールドが読めないかを返す", () => {

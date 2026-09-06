@@ -1,267 +1,292 @@
-# MARKET SENTIMENT — Retail vs Large Trader
+# 不動産仲介 自動追客管理システム
 
-FX / CFD トレーダー向けの、**個人と大口がどちらを向いているか** を一目で確認するためのダッシュボード。
+**営業担当が顧客管理をしなくても、追客が勝手に回る**ことを目的にしたシステム。
 
-サイトを開いて数秒で、次の 4 つが分かることだけを目的にしている。
+> 営業担当が顧客管理をするのではなく、**システムが追客を管理し、営業担当には今日やるべき営業だけを提示する。**
 
-- 個人 (Retail) はどっちを持っているか
-- 大口 (Large Trader) はどっちを向いているか
-- 個人と大口は同じ方向か
-- どちら側に傾きが出ているか
+一般的なCRMではなく **追客漏れ防止システム** として設計している。
+ログインした瞬間に「今日、この顧客に何をすればいいか」が分かる状態を作ることだけを目的とし、
+顧客一覧を見せることは目的にしていない。
 
-高機能な分析サイトではなく、**一瞬で方向性を確認するダッシュボード**。情報は意図的に絞っている。
+営業担当に残す仕事は **話す・LINEする・電話する・提案する・内見する・申込を取る・成約する** だけ。
+「誰に連絡するか」「いつ連絡するか」「どんな文章を送るか」「追客漏れがないか」はシステムが判断・管理する。
 
----
+このリポジトリには2つの仕組みが入っている。扱う時間軸が違うため、画面もジョブも分けてある。
 
-## 用語について（重要）
+| | 追客管理 | 公式LINE 未返信リマインド |
+|---|---|---|
+| 見るもの | 追客が止まっていないか | 顧客を待たせていないか |
+| 時間軸 | 日・週 | 分・時間 |
+| 画面 | `/`（今日やること） | `/reminders` |
+| 定期実行 | 1時間ごと | 5分ごと |
 
-「Whale」は分かりやすさのための呼び名であり、正式な市場データではない。
-このサイトが実際に表示しているのは、**CFTC の建玉報告などから推定した Large Trader / Institutional proxy** である。
-世界中の大口のポジションを取得しているわけではない。UI 上の表記も `🐋 LARGE TRADER BIAS` に統一している。
+両者は接続していて、**顧客からLINEが来たら追客ステータスが自動で復活し、返信が最優先の「今日やること」になる。**
 
-同様に Retail Sentiment も、**提供元 (ブローカー) の顧客ポジション**であって市場全体の個人ポジションではない。
-提供元が 1 社なら `OANDA Retail Sentiment` のように提供元名を残し、複数社を接続したときだけ
-`Aggregated Retail Sentiment` として統合する。
-
-表示するのは「どちら側に傾いているか」だけで、Buy / Sell シグナルは出さない。
-
----
-
-## 画面
-
-### TOP `/`
-
-9 銘柄をカードで並べる。カードに出すのは以下だけ。
-
-- Retail Long % / Short %
-- Large Trader Bias（`LONG ↑` のように前週比の増減も表示）
-- Status（`🟢 ALIGNED LONG` / `⚠️ DIVERGENCE` / `⚪ NEUTRAL` / `🔵 DATA UNAVAILABLE`）
-- 最終更新時間（Retail は相対時間、Large Trader は週次なので日付）
-
-### 詳細 `/market/{slug}`
-
-カードをクリックすると開く。Retail の大きな数字と 1h / 24h 変化、Large Trader の Net Position と前週比、
-Alignment（Retail → Large → Price → Status）、および Retail / Net Position / Price の履歴チャート。
-チャートは形が分かれば十分という方針で、テクニカル分析機能は載せていない。
-
-### API
-
-- `GET /api/markets` … TOP と同じ内容（履歴なし）
-- `GET /api/markets/{slug}` … 詳細と同じ内容（履歴込み）
+このほかに、上の2つとはデータも画面も独立した
+**[Retail vs Large Trader センチメントダッシュボード](docs/20-sentiment-dashboard.md)**（`/sentiment`）が同居している。
+FX / CFD の個人ポジションと大口ポジションの向きを見るためのもので、追客管理とはテーブルもジョブも共有していない。
 
 ---
 
-## 対象銘柄（MVP）
+## ドキュメント
 
-| 表示 | slug | 分類 |
-| --- | --- | --- |
-| USD/JPY ドル円 | `usdjpy` | FX |
-| EUR/JPY ユーロ円 | `eurjpy` | FX |
-| GBP/JPY ポンド円 | `gbpjpy` | FX |
-| EUR/USD ユーロドル | `eurusd` | FX |
-| GBP/USD ポンドドル | `gbpusd` | FX |
-| XAU/USD ゴールド | `xauusd` | METAL |
-| BTC/USD ビットコイン | `btcusd` | CRYPTO |
-| JP225 日経225 | `jp225` | INDEX |
-| NAS100 ナスダック100 | `nas100` | INDEX |
+### 追客管理
 
-追加は `src/lib/markets.ts` に 1 行足すだけで TOP / 詳細 / API すべてに反映されるが、MVP ではこの 9 銘柄以外を表示しない。
+| # | 内容 |
+|---|------|
+| [10. 要件整理](docs/10-followup-requirements.md) | 目的・指示書の要求と実装の対応・MVPの実装状況 |
+| [11. 設計](docs/11-followup-design.md) | 状態遷移・自動追客ルール・優先度判定・DB設計 |
+| [**12. 起動と操作方法**](docs/12-followup-operations.md) | **手元での起動手順／営業担当の使い方／管理者の使い方** |
+
+### 公式LINE 未返信リマインド
+
+| # | 内容 |
+|---|------|
+| [**00. はじめての導入**](docs/00-beginner-setup.md) | **プログラム未経験の方向けの導入手順書** |
+| [01. 実装前整理](docs/01-requirements.md) | 必要なAPI / アカウント / DB / システム構成 / **月額運用コスト** / セキュリティ |
+| [02. システム設計](docs/02-architecture.md) | 状態機械、二重通知を防ぐ3段構え、通知漏れ対策 |
+| [03. データベース設計](docs/03-database-design.md) | ER図・全テーブル定義・データ量見積り |
+| [04. API設計](docs/04-api-design.md) | 全エンドポイントの仕様 |
+| [05. UI設計](docs/05-ui-design.md) | 画面構成 |
+| [06. セットアップ・運用手順](docs/06-operations.md) | LINE設定 → デプロイ → 監視 → トラブルシューティング |
+| [07. 担当者の返信をどう検知するか](docs/07-line-reply-detection.md) | **LINE側の制約と、その回避策（必読）** |
+| [08. Lステップとの共存](docs/08-lstep-coexistence.md) | Webhook転送による共存構成 |
+| [13. 業務システムポータル](docs/13-portal.md) | 社内システムの入口（DFエステートシステム）の設計と運用 |
+
+### センチメントダッシュボード
+
+| # | 内容 |
+|---|------|
+| [**20. ダッシュボードの説明**](docs/20-sentiment-dashboard.md) | **画面・判定ロジック・データの扱い・セットアップ** |
+| [21. Provider の接続手順](docs/providers.md) | OANDA / CFTC の実データ接続と検証手順 |
 
 ---
 
-## データの扱い方
+## 追客管理でできること
 
-原則は 1 つだけ。**取れなかったデータは埋めない。**
+### 今日やること（トップ画面）
 
-- 取得できない場合は `DATA UNAVAILABLE` と表示する
-- 推測値を実データとして表示しない
-- Mock Data を使う場合は画面に `DEMO DATA` と明示する
-- 各データに Source と Last Updated を必ず添える
-- CFTC は週次データなので、日付表示 + `(weekly)` を付けてリアルタイムと誤解させない
+ログイン直後に、対応が必要な顧客だけが上から並ぶ。
 
-### DATA_MODE
-
-| 値 | 動作 |
-| --- | --- |
-| `demo`（既定） | Mock Provider を使う。全ての数値に `DEMO DATA` が付く |
-| `live` | 実データ Provider を使う。未接続の Provider は `DATA UNAVAILABLE` になるだけで、値は作らない |
-
-### 更新頻度（リアルタイム性）
-
-データの種類によって更新頻度が違う。ここは実装ではなくデータ側の性質なので、揃えられない。
-
-| データ | 実際の更新頻度 | 画面の表示 |
-| --- | --- | --- |
-| Retail (OANDA Position Book) | 約 20 分ごとのスナップショット | 相対時間 + `(20 min ごと)` |
-| Large Trader (CFTC COT / TFF) | **週次**（火曜集計 → 金曜 15:30 ET 公表） | 対象週の日付 + `(weekly)` |
-
-画面は 60 秒ごとに自動で再取得する（タブが非表示の間は止まる）。
-Provider 側は OANDA を 10 分、CFTC を 1 時間キャッシュしており、更新頻度以上に API を叩かない。
-
-**大口 (CFTC) はリアルタイムにできない。** 週次かつ対象日から公表まで 3 日遅れるため、
-Retail がほぼリアルタイム・Large が週次という非対称は避けられない。
-UI ではこの 2 つを同じ鮮度に見せないよう、表示形式を分けている。
-
-### Provider の接続状況
-
-| 種別 | Provider | 状況 |
-| --- | --- | --- |
-| Retail | Mock | 実装済み（DEMO DATA） |
-| Retail | OANDA | 実装済み・**実レスポンス未検証**（`OANDA_API_TOKEN` が必要） |
-| Retail | IG | **このProviderはAPI接続待ち** |
-| Retail | FXCM | **このProviderはAPI接続待ち**（SSI の公開提供が縮小しており取得経路が未確定） |
-| Large Trader | Mock | 実装済み（DEMO DATA） |
-| Large Trader | CFTC COT / TFF | 実装済み・**実レスポンス未検証**（認証不要） |
-| Price | Mock | 実装済み（DEMO DATA） |
-| Price | Price Feed | **このProviderはAPI接続待ち** |
-
-「実レスポンス未検証」は、開発環境から外部ホストへ接続できずライブ API で動作確認できていないことを指す。
-リソース ID・フィールド名・パーセンテージの意味が想定と違った場合は、**値を作らず理由付きで
-`DATA UNAVAILABLE`** を返すようにしてある。初回接続時の確認手順は [`docs/providers.md`](docs/providers.md)。
-
-### Retail の履歴（1h / 24h 変化とチャート）
-
-OANDA が返すのは「今この瞬間の比率」だけで履歴が無いため、取得した値を自分で貯めて差分を出す。
-
-| DATABASE_URL | 保存先 | 挙動 |
-| --- | --- | --- |
-| 未設定 | プロセス内メモリ | 起動後に貯まった分だけ 1h / 24h とチャートが出る。再起動で消える |
-| 設定あり | PostgreSQL (`retail_sentiment`) | 永続化される。`npm run db:schema` でテーブルを作る |
-
-まだ十分に貯まっていない間は、`0` や推測値ではなく `—`（変化なし表示ではない）と
-「履歴がありません」を出す。比較の基準は壁時計ではなく**最新の観測時刻**に合わせているため、
-データ自体が古いときに「変化 0」と誤表示することはない（古さは Updated 表示で分かる）。
-履歴の保存が失敗しても現在値の表示は止めない。
-
-### 定期取得 (cron)
-
-画面を開いたときにも履歴は貯まるが、それだけだと誰も見ていない時間帯が歯抜けになる。
-`/api/cron/collect` を 20 分ごと（OANDA の更新間隔）に叩くと、全銘柄をまとめて取得して貯める。
-
-```bash
-curl -H "Authorization: Bearer $CRON_SECRET" https://<host>/api/cron/collect
+```
+🔴 期限超過   6件
+   S  青木 健一   2日超過   見積書待ち 3日   →  💬 LINE  見積書の進捗連絡    [LINEを送る] [対応した]
+   A  井上 みゆき 2日超過   返信なし 5日     →  💬 LINE  LINEで再アプローチ  [LINEを送る] [対応した]
+🔴 最優先     4件
+   S  LINE 花子             物件提案中       →  💬 LINE  顧客から返信あり。内容を確認して返信
+🟡 通常       1件
+🟢 自動追客中 6名   ← 何もしなくてよい。期限が来たら自動で出てくる
 ```
 
-- `CRON_SECRET` が未設定なら 503 を返す（誰でも叩ける状態にしない）
-- レスポンスに銘柄ごとの結果と、貯めなかった理由が入る
+**対応が終わったら押すのはボタン1つ。** 最終接触日時・次回追客日・優先度・追客履歴はすべて自動更新される。
+次回いつ追客するかを営業担当が考えることはない。
 
-**定期取得が意味を持つのは `DATABASE_URL` を設定したときだけ。** 保存先がメモリの場合、
-貯まるのは cron を処理したプロセスの中だけで、画面を出すインスタンスとは別になり得る。
-その状態で叩くと、レスポンスの `warning` にその旨が入る。
+### 自動追客ルール
 
-スケジューラは環境に合わせて用意する。
+ステータスごとに「何日後に何をするか」を並べたルールで、次回アクションが自動で決まる。
 
-| 環境 | 設定 |
-| --- | --- |
-| Vercel | `vercel.json` の `crons` に設定済み（`*/20 * * * *`）。プランによって最短間隔の制限があるので要確認 |
-| Netlify | Scheduled Functions で同じ URL を叩く |
-| その他 | 任意の cron から `curl` する（GitHub Actions の `schedule` でも可） |
+| ステータス | 追客リズム |
+|-----------|-----------|
+| 新規反響 | すぐ電話 → 2時間後LINE → 翌日電話 → 3日で「返信なし」へ |
+| 物件提案中 | 2日後LINE → 5日後LINE → 10日後電話 |
+| 見積書待ち | 24時間後LINE → 48時間後LINE → 72時間後に**営業担当へ通知** |
+| 内見済 | 当日に感想確認 → 2日後LINE → 5日後電話 |
+| 返信なし | 1日 → 3日 → 7日（電話）→ 14日 → **30日で休眠へ自動遷移** |
+| 休眠 | 通算60日・90日で掘り起こしLINE（失注にはしない） |
 
-### live モードでまだ出ないもの
+各ステータスの最終段は自動遷移になっているため、**どのステータスからも追客が途切れない。**
+ルールは `/settings/followup` から会社の営業スタイルに合わせて変更できる。
 
-- **EUR/JPY・GBP/JPY の Large Trader** … 対応する単一の CFTC 建玉報告がない。
-  2 契約から合成しても契約単位が異なり根拠のない数字になるため `DATA UNAVAILABLE` にしている
-- **BTC/USD の Large Trader** … Retail 側と揃う粒度の建玉報告がない
-- **Price** … Provider 未接続
+### そのほか
 
-接続時の想定エンドポイントなどは [`docs/providers.md`](docs/providers.md) を参照。
-
----
-
-## 判定ロジック
-
-`src/lib/alignment.ts` に集約してある（UI 側にロジックを持たせない）。
-
-- **Retail Bias**: Long% が 55% 以上で `LONG`、45% 以下で `SHORT`、その間は `NEUTRAL`
-- **Large Trader Bias**: Net Position が総建玉の ±5% を超えた側。CFTC TFF の `Leveraged Funds`
-  （商品は `Managed Money`、株価指数は `Asset Manager`）を Large / Institutional proxy として扱う
-- **増減（↑ / ↓）**: Net Position の前週比が ±3% を超えたとき
-- **Status**:
-
-  | Retail | Large | Status |
-  | --- | --- | --- |
-  | LONG | LONG | 🟢 ALIGNED LONG |
-  | SHORT | SHORT | 🟢 ALIGNED SHORT |
-  | LONG | SHORT | ⚠️ DIVERGENCE |
-  | SHORT | LONG | ⚠️ DIVERGENCE |
-  | どちらかが中立 | | ⚪ NEUTRAL |
-  | どちらかが欠測 | | 🔵 DATA UNAVAILABLE |
-
-- **Alignment Score (0-100)**: 一致していれば 50 から上、乖離していれば下に振れる。
-
-  ```
-  50
-   ± (15〜25)  Retail と Large が同方向か逆方向か（傾きの強さで加減）
-   ± 7         Large が前週比でその方向に積み増しているか
-   ± 5         価格トレンドが Large の方向と一致しているか
-  ```
-
-  「一致度の強さ」を表す指標であり、売買シグナルではない。意図的に 0 / 100 へは振り切らない。
+- **優先度の自動判定**（S 今すぐ / A 今日 / B 通常 / C 自動追客）— ステータス・期限超過・引越し時期・未返信状態から計算
+- **LINEテンプレート** — 状況に合った候補文が出る。顧客名・エリア・家賃は差し込み済み
+- **追客履歴** — ボタン操作とシステム処理から自動で積み上がる（手入力なし）
+- **管理者ダッシュボード** — 期限超過・滞留状況と、担当者別の反響/追客/内見/申込/成約/成約率
+- **顧客登録** — 必須入力は名前だけ。登録した瞬間に追客が始まる
 
 ---
 
-## 開発
+## ⚠️ 導入前に必ず読むこと
+
+**LINE Messaging API の Webhook は、担当者が LINE Official Account Manager のチャット画面から
+送った返信をシステムに通知しない。** これは LINE 側の仕様であり、実装では回避できない。
+
+そのため本システムは返信検知を4経路で担保している。
+
+| 経路 | 確実性 |
+|------|-------|
+| **管理画面から返信する（推奨）** | ◎ 完全自動。送信と同時に「対応済み」になる |
+| 管理画面の「対応済みにする」ボタン | ○ 手動 |
+| 取り込みAPI `/api/ingest/outbound` | ○ 外部連携がある場合 |
+| フェイルセーフ（通知を止めない） | ◎ 押し忘れても見逃さない |
+
+**運用ルールとして「顧客への返信は管理画面から行う」と決めれば、依頼の要件は完全自動で満たされる。**
+詳細 → [docs/07](docs/07-line-reply-detection.md)
+
+---
+
+## 公式LINE 未返信リマインドの機能
+
+### 未返信の検知【仕様①】
+- 「顧客の最新メッセージ > 担当者の最新返信」で未返信と判定
+- 顧客の追加メッセージで経過カウントを最新メッセージから再スタート
+- **連投による通知先送りを打ち消す保険**：返信が無い限り、無通知区間が上限（既定3時間）を超えない
+
+### リマインド間隔【仕様②・通知の工夫】
+- 1時間ごと / 2時間ごと / 3時間ごと / 通知しない から選択（全体設定＋顧客ごとの上書き）
+- 期限到来分をまとめて処理する設計のため、Cron が数回落ちても通知漏れが起きない
+
+### 担当者の管理【仕様③】
+- 顧客ごとに担当者を設定。担当者個人へ通知
+- 未設定なら社内共通チャンネル（Slack）へ通知
+
+### エスカレーション
+- 経過時間の閾値ごとに通知先を追加（例：1時間→担当者 / 3時間→＋責任者 / 6時間→＋管理者）
+- 到達済みルールの宛先を合算し、**同じ宛先には必ず1通だけ**
+
+### 営業時間
+- 曜日ごとの営業時間、土日祝の設定、臨時休業日・臨時営業日
+- 営業時間外は**スキップではなく翌営業日へ繰り延べ**
+- 経過時間を営業時間だけで数えるモードあり
+
+### 管理画面【仕様④】
+- **ダッシュボード**：未返信顧客数 / 1・3・24時間以上 / 本日の受信・対応済み数 / 担当者別件数 / ワースト10
+- **未返信一覧**：顧客名・LINEユーザーID・担当者・最終メッセージ・受信日時・未返信経過・リマインド回数・対応状況・対応済み日時
+- **顧客詳細**：メッセージ履歴・リマインド送信履歴・返信送信・状態変更・担当者/間隔設定
+- 対応状況は 未対応 / 対応中 / 対応済み / 要確認
+
+### 業務システムポータル（DFエステートシステム）
+- `/portal` … ログインすると、社内で使うシステムがアプリのアイコンのように並ぶ入口
+- `/portal/admin` … 管理者がシステムを追加・編集・削除・並び替え・公開/非公開を行う
+- **遷移先URLはコードに書かない**。管理画面で変えれば次に開いた時点で切り替わる
+- システムが増えてもコード修正は不要（管理画面から登録するだけ）
+- 詳細は [docs/13-portal.md](docs/13-portal.md)
+
+### 事故の防止
+| 事故 | 対策 |
+|------|------|
+| 二重通知 | ① `FOR UPDATE SKIP LOCKED` による原子的な確保 ② `dedupeKey` の UNIQUE 制約 ③ 送信直前の再判定 |
+| 通知漏れ | 期限超過分を全件処理 ／ 5分リースによる自動再取得 ／ 指数バックオフ再試行 ／ watchdog ／ `/api/health` 外部監視 |
+| 返信済みなのに通知が続く | 返信記録と同一トランザクションで予定を取消 ＋ 送信直前の再判定 |
+| 同時操作の競合 | `conversations.version` による楽観ロック（競合時 409） |
+
+---
+
+## 技術構成
+
+| 層 | 採用 |
+|----|------|
+| アプリ | Next.js 15（App Router） / TypeScript / Tailwind CSS |
+| DB | PostgreSQL（Supabase / Neon）+ Prisma |
+| 定期実行 | Netlify Scheduled Functions（既定）/ Vercel Cron / GitHub Actions（要手動有効化）<br>未返信リマインド 5分ごと ／ 追客 1時間ごと |
+| 社内通知 | **Slack Incoming Webhook（採用）** ／ Discord・LINE WORKS・Google Chat ／ LINE push（グループ・個人）も選択可 |
+| 認証 | scrypt + HMAC署名付き HttpOnly Cookie（外部依存なし） |
+| テスト | Vitest（230ケース）＋ 実DB結合確認スクリプト（未返信10シナリオ / 追客40項目）。GitHub Actions で自動実行 |
+
+**月額運用コスト：¥0（Netlify + Supabase 無料枠 + Slack通知）〜 約¥5,000**
+社内通知を Slack にしたことで、社内リマインド分（想定1,500通/月）の LINE 通数はゼロ。
+残る LINE コストは顧客への返信分のみ（月200通を超えるならライトプラン ¥5,000/月）。
+内訳 → [docs/01](docs/01-requirements.md#5-月額運用コスト)
+
+---
+
+## セットアップ
 
 ```bash
+# 1. 依存パッケージ
 npm install
-npm run dev        # http://localhost:3000
-npm test           # ロジックのテスト (vitest)
-npm run typecheck
-npm run build
+
+# 2. 環境変数
+cp .env.example .env
+#    DATABASE_URL / LINE_CHANNEL_SECRET / LINE_CHANNEL_ACCESS_TOKEN /
+#    INTERNAL_SLACK_WEBHOOK_URL / CRON_SECRET / SESSION_SECRET を設定
+
+# 3. データベース
+npx prisma migrate deploy   # 本番デプロイ時は build:deploy が自動実行するため不要
+npm run seed                # 設定・エスカレーション・祝日・追客ルール・LINEテンプレート・管理者（初回のみ）
+
+# 4. 動作確認用のデモ顧客（本番では実行しない）
+npm run seed:demo
+
+# 5. 起動
+npm run dev         # http://localhost:3000
 ```
 
-環境変数は `.env.example` を参照（未設定でも `DATA_MODE=demo` で動く）。
+追客管理は LINE 連携なしでも動く（電話・ポータル経由の反響を手で登録できる）。
+LINE 連携を行う場合は、LINE Developers の Webhook URL に `https://<host>/api/line/webhook` を設定し、
+**「Webhookの利用」をオン・「応答メッセージ」をオフ**にする。
 
-### 構成
+起動後の操作方法 → [docs/12](docs/12-followup-operations.md) ／ LINE設定の詳細手順 → [docs/06](docs/06-operations.md)
+
+## 動作確認
+
+PR と `main` への push で GitHub Actions が自動実行する（`.github/workflows/ci.yml`）。
+PostgreSQL のサービスコンテナを立てて結合確認まで流すため、行ロックや冪等キーに依存する
+中核の保証もCIで担保される。
+
+手元で実行する場合:
+
+```bash
+npm test                # 判定ロジック 230ケース
+npm run typecheck       # 型チェック
+npm run build           # 本番ビルド（DB不要）
+
+DATABASE_URL=postgresql://... npm run check:followup   # 実DBでの追客の結合確認 40項目
+DATABASE_URL=postgresql://... npm run check:reminder   # 実DBでの未返信リマインドの結合確認 10シナリオ
+DATABASE_URL=postgresql://... npm run followups:run    # 追客の定期実行を手元で1回だけ走らせる
+```
+
+## ディレクトリ構成
 
 ```
 src/
-  app/                    Next.js App Router（TOP / 詳細 / API / cron）
-  components/             カード・バッジ・チャートなどの表示部品
-  lib/
-    markets.ts            対象銘柄の定義
-    alignment.ts          Retail vs Large Trader の判定・スコア
-    snapshot.ts           Provider から集めて 1 銘柄分にまとめる層
-    format.ts             表示フォーマッタ
-    collect.ts            定期取得（全銘柄を取得して履歴に貯める）
-    cache.ts              Provider 結果の短期キャッシュ
-    history/              Retail 履歴の保存 (メモリ / PostgreSQL)
-  providers/
-    types.ts              共通インターフェース
-    registry.ts           DATA_MODE に応じて使う Provider を決める
-    mock/ oanda/ ig/ fxcm/ cftc/ price/
-db/schema.sql             テーブル定義 (PostgreSQL)
-tests/                    判定ロジックと Provider の挙動のテスト
+├── app/
+│   ├── api/
+│   │   ├── customers/        顧客登録・更新・追客アクション記録・LINE返信
+│   │   ├── cron/followups/   追客の定期実行（自動遷移・通知・優先度）
+│   │   ├── cron/reminders/   未返信リマインドの定期実行
+│   │   ├── line/webhook/     LINE Webhook（署名検証・冪等化・未返信化・追客の自動判定）
+│   │   ├── templates/        LINEテンプレート
+│   │   ├── followup-rules/   自動追客ルール
+│   │   └── ...               管理API
+│   ├── page.tsx              ★ 今日やること（トップ画面）
+│   ├── customers/            顧客一覧・顧客詳細・顧客登録
+│   ├── admin/                管理者ダッシュボード
+│   ├── reminders/            未返信リマインドのダッシュボード・未返信一覧
+│   ├── settings/             設定・追客ルール・LINEテンプレート
+│   ├── portal/               業務システムポータル（一覧・システム管理）
+│   └── sentiment/            センチメントダッシュボード（追客とは独立）
+├── lib/
+│   ├── domain/               ★ 副作用なしの判定ロジック（テスト対象）
+│   │   ├── followUp.ts         次回アクション・優先度・今日やることの仕分け
+│   │   ├── messageTemplate.ts  LINE文章の差し込みと候補選択
+│   │   ├── businessHours.ts    営業時間・休日・繰り延べ
+│   │   ├── reminderSchedule.ts 次回通知時刻の決定
+│   │   ├── escalation.ts       段階判定・通知先解決
+│   │   ├── notificationText.ts 通知本文
+│   │   ├── portal.ts           ポータルのURL検証・表示順・権限
+│   │   └── dedupe.ts           冪等キー
+│   ├── services/             DBトランザクション・通知送信
+│   │   ├── followUp.ts         追客の状態遷移（ボタン操作・LINE連動）
+│   │   ├── followUpRunner.ts   追客Cronの本体
+│   │   ├── followUpDefaults.ts 追客ルール・テンプレートの初期値
+│   │   ├── todayList.ts        今日やることの組み立て
+│   │   └── salesStats.ts       管理者向けの集計
+│   ├── line/                 Messaging API クライアント・署名検証
+│   ├── notify/               通知チャネルのディスパッチ（Slack / Discord / LINE WORKS / LINE）
+│   └── auth/                 セッション・パスワード
+├── components/               画面コンポーネント
+│   ├── followup/               今日やること・アクションボタン・顧客登録・設定
+│   └── sentiment/              センチメントダッシュボードのカード・チャート
+├── providers/                センチメントの外部データ取得（OANDA / CFTC ほか）
+prisma/                       スキーマ・マイグレーション・seed（追客管理）
+db/schema.sql                 センチメントダッシュボードのテーブル定義
+tests/                        ユニットテスト
+scripts/
+├── e2e-check.ts              未返信リマインドの実DB結合確認
+├── followup-check.ts         追客管理の実DB結合確認
+├── demo-seed.ts              動作確認用のデモ顧客
+└── run-followups.ts          追客Cronを手元で1回実行
+docs/                         設計ドキュメント
 ```
-
-Provider は 3 つのインターフェースだけを実装すればよい。
-
-```ts
-getRetailSentiment(market)     // Retail Provider
-getLargeTraderPosition(market) // Large Trader Provider
-getPrice(market)               // Price Provider
-```
-
-いずれも「値」か「取得できない理由」のどちらかを返す（`ProviderResult<T>`）。
-
-### DB
-
-`db/schema.sql` に `markets` / `retail_sentiment` / `large_trader_positions` / `market_prices` /
-`alignment_scores` を定義してある。適用は `npm run db:schema`（`psql "$DATABASE_URL" -f db/schema.sql`）。
-
-現在アプリが読み書きするのは `markets` と `retail_sentiment` の 2 つ（Retail の履歴用）。
-残りのテーブルは、Large Trader / 価格 / 判定結果を貯める段階で使う。
-
-ORM は使わず `pg` で直接 SQL を書いている。ビルド時のコード生成が要らず、
-テーブル定義の出どころを `db/schema.sql` 1 つに保てるため。
-
----
-
-## 今後の順番
-
-1. ~~OANDA Retail Data の接続~~ → 実装済み。実レスポンスでの検証待ち
-2. ~~CFTC COT / TFF の接続~~ → 実装済み。実レスポンスでの検証待ち
-3. ~~Retail 履歴の保存~~ → 実装済み（メモリ / PostgreSQL）。実 DB での検証待ち
-4. ~~定期取得（20 分ごとに履歴へ貯める cron）~~ → 実装済み（`/api/cron/collect`）
-5. Price Data の接続
-6. 必要なら Retail の提供元を追加（IG / FXCM）して Aggregated 表示にする

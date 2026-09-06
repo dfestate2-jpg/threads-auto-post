@@ -116,7 +116,7 @@ function walkTo(seed: string, end: number, points: number, amplitude: number): n
     v *= 0.86; // 平均回帰させて発散を防ぐ
     raw.push(v);
   }
-  const drift = raw[raw.length - 1];
+  const drift = raw[raw.length - 1] ?? 0;
   return raw.map((r) => end + (r - drift));
 }
 
@@ -149,13 +149,13 @@ export function demoRetail(slug: string, now = new Date()): RetailSentiment | nu
   );
   const history = series(values, HOUR, endAt, (v) => Math.round(v * 10) / 10);
   const long = Math.round(spec.retailLong);
-  const last = history[history.length - 1].v;
+  const last = history[history.length - 1]!.v;
 
   return {
     longPercent: long,
     shortPercent: 100 - long,
-    change1h: round1(last - history[history.length - 2].v),
-    change24h: round1(last - history[history.length - 25].v),
+    change1h: round1(last - history[history.length - 2]!.v),
+    change24h: round1(last - history[history.length - 25]!.v),
     history,
     meta: {
       source: "Mock Provider",

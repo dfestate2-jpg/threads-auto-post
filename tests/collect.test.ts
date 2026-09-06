@@ -57,7 +57,7 @@ describe("collectRetailHistory", () => {
 
     expect(summary.recorded).toBe(0);
     expect(summary.warning).toContain("demo");
-    expect(summary.markets[0].reason).toContain("DEMO");
+    expect(summary.markets[0]!.reason).toContain("DEMO");
     expect(await store.since("usdjpy", new Date(0))).toEqual([]);
   });
 
@@ -68,7 +68,7 @@ describe("collectRetailHistory", () => {
 
     const summary = await collectRetailHistory("live", store);
     expect(summary.recorded).toBe(0);
-    expect(summary.markets[0].reason).toContain("OANDA_API_TOKEN");
+    expect(summary.markets[0]!.reason).toContain("OANDA_API_TOKEN");
   });
 });
 

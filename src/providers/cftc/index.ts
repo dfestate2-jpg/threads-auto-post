@@ -106,7 +106,8 @@ async function fetchCot(mapping: CftcMapping): Promise<ProviderResult<LargeTrade
 
   const weeks = parsed.weeks;
   const latest = weeks[weeks.length - 1];
-  const previous = weeks.length > 1 ? weeks[weeks.length - 2] : null;
+  if (!latest) return unavailable(CFTC_SOURCE_LABEL, "建玉報告の該当週が 1 件も取得できなかった");
+  const previous = weeks.length > 1 ? (weeks[weeks.length - 2] ?? null) : null;
 
   return {
     status: "ok",

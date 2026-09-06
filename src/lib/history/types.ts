@@ -31,6 +31,7 @@ export function changeOver(points: RetailPoint[], windowMs: number): number | nu
   if (points.length < 2) return null;
 
   const latest = points[points.length - 1];
+  if (!latest) return null;
   const cutoff = new Date(latest.t).getTime() - windowMs;
 
   // cutoff 以前で最も新しい点を基準にする

@@ -149,6 +149,10 @@ describe("PostgresRetailHistoryStore", () => {
 });
 
 describe("スナップショットへの履歴の反映", () => {
+  // 履歴を取り出せる範囲は「今から 48 時間」なので、固定日時で組むと
+  // 時間が経つだけでテストが窓から外れて落ちる。実行時刻を基準にする
+  const now = new Date();
+
   beforeEach(() => {
     clearCache();
     vi.stubGlobal(
@@ -156,7 +160,7 @@ describe("スナップショットへの履歴の反映", () => {
       vi.fn(async () =>
         Response.json({
           positionBook: {
-            time: "2026-08-28T12:00:00.000Z",
+            time: now.toISOString(),
             buckets: [{ longCountPercent: "68", shortCountPercent: "32" }],
           },
         }),
@@ -182,7 +186,6 @@ describe("スナップショットへの履歴の反映", () => {
 
   it("過去の点が貯まっていれば 1h / 24h 変化と履歴を出す", async () => {
     const store = new InMemoryRetailHistoryStore();
-    const now = new Date("2026-08-28T12:00:00.000Z");
     await store.record("usdjpy", "OANDA", point(25, 60, now));
     await store.record("usdjpy", "OANDA", point(24, 61, now));
     await store.record("usdjpy", "OANDA", point(1, 65, now));

@@ -36,8 +36,8 @@ describe("demo データの整合性", () => {
       if (!large) continue;
       expect(large.netPosition).toBe(large.longPosition - large.shortPosition);
       expect(large.history).toHaveLength(26);
-      expect(large.history[large.history.length - 1].v).toBe(large.netPosition);
-      expect(large.history[large.history.length - 2].v).toBe(large.previousNetPosition);
+      expect(large.history[large.history.length - 1]!.v).toBe(large.netPosition);
+      expect(large.history[large.history.length - 2]!.v).toBe(large.previousNetPosition);
       expect(large.meta.cadence).toBe("weekly");
     }
   });

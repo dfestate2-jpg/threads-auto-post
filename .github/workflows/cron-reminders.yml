@@ -1,0 +1,52 @@
+# ホスティング側にスケジューラが無い場合の「代替」リマインド起動手段。
+#
+# 【既定では自動実行しない】
+# 本システムの推奨構成は Netlify Scheduled Functions（netlify.toml）または
+# Vercel Cron（vercel.json）であり、そちらを使う場合このワークフローは不要。
+# 有効化すると未デプロイ状態でも5分ごとに実行され、Secrets 未設定なら毎回失敗する。
+#
+# 【有効化する手順】
+#  1. リポジトリの Settings > Secrets and variables > Actions に
+#     APP_BASE_URL（例: https://example.netlify.app）と CRON_SECRET を登録する
+#  2. 下の `schedule:` のコメントを外す
+#
+# 注意: GitHub Actions のスケジュールは数分〜十数分の遅延が発生することがある。
+#       リマインド精度を重視するなら Netlify / Vercel のスケジューラを使うこと。
+name: reminders-cron
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '*/5 * * * *'
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      # Secrets 未設定のまま起動された場合に、curl の不可解なエラーではなく
+      # 原因が分かる形で失敗させる。
+      # ここは「静かに成功」させてはいけない: リマインドが動いていないのに
+      # 緑になるのは、本システムが最も防ごうとしている状態そのもののため。
+      - name: Check required secrets
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          missing=""
+          [ -n "$APP_BASE_URL" ] || missing="$missing APP_BASE_URL"
+          [ -n "$CRON_SECRET" ] || missing="$missing CRON_SECRET"
+          if [ -n "$missing" ]; then
+            echo "::error::必要な Secrets が未設定です:$missing"
+            echo "Settings > Secrets and variables > Actions に登録してください。"
+            echo "Netlify / Vercel のスケジューラを使う場合、このワークフローは不要です。"
+            exit 1
+          fi
+
+      - name: Trigger reminder job
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -sS -X POST "${APP_BASE_URL%/}/api/cron/reminders" \
+            -H "x-cron-secret: ${CRON_SECRET}" \
+            --fail-with-body
