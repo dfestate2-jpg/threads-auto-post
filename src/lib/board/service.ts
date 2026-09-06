@@ -1,7 +1,7 @@
 /**
  * 追客ボードの操作。
  *
- * 状態を変えるのはここだけ。入口は3つあるが（通話メモ・一覧の角度・LINEのボタン）、
+ * 状態を変えるのはここだけ。入口は3つあるが（ヒアリングシート・一覧の角度・LINEのボタン）、
  * **次回追客日を決める処理は1か所に集めてある**。散らばると、片方だけ直して
  * もう片方が古い動きのまま残る。前のシステムで実際に起きた事故なので繰り返さない。
  *
@@ -157,7 +157,7 @@ export async function setAngle(input: SetAngleInput, ctx: BoardContext): Promise
 }
 
 // ---------------------------------------------------------------------------
-// 入口②　通話メモ
+// 入口②　ヒアリングシート
 // ---------------------------------------------------------------------------
 
 export interface CallMemoInput {
@@ -178,7 +178,7 @@ export interface CallMemoResult {
   ended: boolean
 }
 
-/** 電話のあと、通話メモを登録する。角度から次回追客日が自動で決まる */
+/** 接客や電話のあと、ヒアリングシートを登録する。角度から次回追客日が自動で決まる */
 export async function addCallMemo(input: CallMemoInput, ctx: BoardContext): Promise<CallMemoResult> {
   return prisma.$transaction(async (tx) => {
     const entry = await ensureEntry(tx, input.customerId)
@@ -217,7 +217,7 @@ export async function addCallMemo(input: CallMemoInput, ctx: BoardContext): Prom
       angleBefore: before,
       angleAfter: input.angle,
       staffId: input.staffId,
-      detail: '通話メモを登録',
+      detail: 'ヒアリングシートを登録',
       at: ctx.now,
     })
 
@@ -334,5 +334,45 @@ export async function markNotified(entryId: string, ctx: BoardContext): Promise<
   await prisma.boardEntry.update({
     where: { id: entryId },
     data: { notifiedOn: dateKeyOf(ctx.now, ctx.timezone) },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 追客の担当者
+// ---------------------------------------------------------------------------
+
+export interface SetAssigneeInput {
+  customerId: string
+  /** null で担当なし */
+  assigneeId: string | null
+  /** 操作した人 */
+  staffId: string | null
+}
+
+/**
+ * 追客の担当者を変える。
+ *
+ * **顧客そのものの担当（Customer.assigneeId）は書き換えない。**
+ * そちらはリマインドシステムが通知先に使っている値で、触れば向こうの動きが変わる。
+ * 追客の担当はこの行にだけ持たせてあるので、片方を変えても互いに影響しない。
+ *
+ * 次回追客日にも触らない。引き継ぐたびに予定が後ろへ流れると、
+ * 引き継いだ案件ほど追客が遅れることになる。
+ */
+export async function setBoardAssignee(input: SetAssigneeInput, ctx: BoardContext): Promise<BoardEntry> {
+  return prisma.$transaction(async (tx) => {
+    const entry = await ensureEntry(tx, input.customerId)
+    const updated = await tx.boardEntry.update({
+      where: { id: entry.id },
+      data: { assigneeId: input.assigneeId },
+    })
+    await logEvent(tx, entry.id, BoardEventType.ANGLE_SET, {
+      angleBefore: entry.angle,
+      angleAfter: entry.angle,
+      staffId: input.staffId,
+      detail: input.assigneeId === null ? '担当を外した' : '担当を変えた',
+      at: ctx.now,
+    })
+    return updated
   })
 }

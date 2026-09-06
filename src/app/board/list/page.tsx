@@ -2,6 +2,7 @@ import Link from 'next/link'
 
 import { AppShell } from '@/components/AppShell'
 import { AngleSelect } from '@/components/board/AngleSelect'
+import { BoardAssigneeSelect } from '@/components/board/BoardAssigneeSelect'
 import { requirePageSession } from '@/lib/auth/guard'
 import { overdueDays } from '@/lib/board/ladder'
 import { OUTCOME_LABEL } from '@/lib/board/service'
@@ -94,6 +95,7 @@ export default async function BoardListPage({
   )
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const staffOptions = staff.map((s) => ({ id: s.id, name: s.name }))
   const views = [
     { id: 'all', name: 'すべて' },
     { id: 'none', name: `角度なし（${counts}）` },
@@ -113,7 +115,7 @@ export default async function BoardListPage({
             追客の設定
           </Link>
           <Link href="/board" className="btn-primary px-3 py-1.5 text-sm">
-            ＋ 通話メモ
+            ＋ ヒアリングシート
           </Link>
         </div>
       </div>
@@ -160,7 +162,7 @@ export default async function BoardListPage({
       </div>
 
       <div className="card overflow-x-auto">
-        <table className="w-full min-w-[46rem] text-sm">
+        <table className="w-full min-w-[56rem] text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs text-slate-600">
               <th className="px-3 py-2">角度</th>
@@ -193,7 +195,14 @@ export default async function BoardListPage({
                       </Link>
                       {c.phone ? <div className="text-xs text-slate-500">{c.phone}</div> : null}
                     </td>
-                    <td className="px-3 py-2 text-slate-700">{e?.assignee?.name ?? <span className="text-slate-400">—</span>}</td>
+                    <td className="px-3 py-2">
+                      <BoardAssigneeSelect
+                        customerId={c.id}
+                        customerName={name}
+                        value={e?.assigneeId ?? null}
+                        staff={staffOptions}
+                      />
+                    </td>
                     <td className={`px-3 py-2 text-xs ${over > 0 ? 'font-bold text-red-700' : 'text-slate-700'}`}>
                       {e?.endedAt ? (
                         <span className="text-slate-500">

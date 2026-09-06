@@ -2,6 +2,7 @@ import Link from 'next/link'
 
 import { AppShell } from '@/components/AppShell'
 import { TodayActions } from '@/components/board/TodayActions'
+import { TodayTasks, type TaskRow } from '@/components/board/TodayTasks'
 import { requirePageSession } from '@/lib/auth/guard'
 import { ANGLE_LABEL, isAngle, overdueDays } from '@/lib/board/ladder'
 import { loadBoardContext } from '@/lib/board/settings'
@@ -39,9 +40,11 @@ export default async function BoardTodayPage({
 
   // 「自分の担当」が既定。切り替えれば他の人の分も見える
   const scope = params.staff ?? session.staffId ?? 'all'
-  const endOfToday = instantAtDayMinutes(dateKeyOf(ctx.now, ctx.timezone), 1440, ctx.timezone)
+  const todayKey = dateKeyOf(ctx.now, ctx.timezone)
+  const startOfToday = instantAtDayMinutes(todayKey, 0, ctx.timezone)
+  const endOfToday = instantAtDayMinutes(todayKey, 1440, ctx.timezone)
 
-  const [rows, staff] = await withReadRetry(() =>
+  const [rows, staff, tasks] = await withReadRetry(() =>
     Promise.all([
       prisma.boardEntry.findMany({
         where: {
@@ -57,6 +60,17 @@ export default async function BoardTodayPage({
         take: 200,
       }),
       prisma.staff.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+      // 済んだものも今日ぶんだけは出す。押した直後に消えると、
+      // 本当に押せたのか分からなくなる
+      prisma.boardTask.findMany({
+        where: {
+          ...(scope === 'all' ? {} : { staffId: scope === 'none' ? null : scope }),
+          OR: [{ doneAt: null, dueOn: { lt: endOfToday } }, { doneAt: { not: null }, dueOn: { gte: startOfToday, lt: endOfToday } }],
+        },
+        include: { staff: { select: { name: true } } },
+        orderBy: [{ doneAt: 'asc' }, { dueOn: 'asc' }, { createdAt: 'asc' }],
+        take: 100,
+      }),
     ]),
   )
 
@@ -66,15 +80,15 @@ export default async function BoardTodayPage({
     <AppShell>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-bold">
-          今日やること <span className="ml-2 text-sm font-normal text-slate-500">{rows.length}件</span>
-          {overdue > 0 ? <span className="ml-2 text-sm font-bold text-red-700">超過 {overdue}件</span> : null}
+          今日やること
+          {overdue > 0 ? <span className="ml-2 text-sm font-bold text-red-700">追客の超過 {overdue}件</span> : null}
         </h1>
         <div className="flex items-center gap-2">
           <Link href="/board/settings" className="text-sm text-slate-500 underline">
             追客の設定
           </Link>
           <Link href="/board" className="btn-primary px-3 py-1.5 text-sm">
-            ＋ 通話メモ
+            ＋ ヒアリングシート
           </Link>
         </div>
       </div>
@@ -96,6 +110,26 @@ export default async function BoardTodayPage({
           </Link>
         ))}
       </div>
+
+      <div className="mb-4">
+        <TodayTasks
+          today={todayKey}
+          tasks={tasks.map(
+            (t): TaskRow => ({
+              id: t.id,
+              title: t.title,
+              dueOn: formatShortDateJa(t.dueOn, ctx.timezone),
+              done: t.doneAt !== null,
+              overdue: overdueDays(t.dueOn, ctx.now, ctx.timezone),
+              assigneeName: scope === 'all' ? (t.staff?.name ?? null) : null,
+            }),
+          )}
+        />
+      </div>
+
+      <h2 className="mb-2 text-base font-bold">
+        追客 <span className="ml-1 text-sm font-normal text-slate-500">{rows.length}件</span>
+      </h2>
 
       {rows.length === 0 ? (
         <div className="card p-10 text-center text-slate-500">
