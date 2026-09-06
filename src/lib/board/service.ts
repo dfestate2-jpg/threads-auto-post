@@ -330,7 +330,7 @@ export async function actEnd(
 
 export const OUTCOME_LABEL: Record<BoardOutcome, string> = {
   CONTRACTED: 'うちで契約になった',
-  LOST_OTHER: '他社で決まった',
+  LOST_OTHER: '他社で契約した',
   NO_CHANCE: '見込みなし',
 }
 

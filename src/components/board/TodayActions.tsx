@@ -5,7 +5,7 @@ import { useState } from 'react'
 
 const OUTCOMES = [
   { value: 'CONTRACTED', label: 'うちで契約' },
-  { value: 'LOST_OTHER', label: '他社で決まった' },
+  { value: 'LOST_OTHER', label: '他社で契約' },
   { value: 'NO_CHANCE', label: '見込みなし' },
 ] as const
 
@@ -17,7 +17,10 @@ const ANGLES = [
   { value: 1, label: '1 追わない', tone: 'border-slate-300 bg-slate-100 text-slate-600' },
 ] as const
 
-type Step = 'idle' | 'angle' | 'outcome'
+type Step = 'idle' | 'angle' | 'outcome' | 'done'
+
+/** 押したあと画面から消えるまでの間。次回日を読む時間を残す */
+const DONE_MS = 2600
 
 /**
  * 今日やることの3つのボタン。
@@ -25,8 +28,9 @@ type Step = 'idle' | 'angle' | 'outcome'
  * LINEの通知に付くボタンと**同じ処理を通す**。片方で片付ければもう片方からも
  * 消える、という状態を保つため、判断はすべてサーバー側の1か所に置いてある。
  *
- * 「電話した」のあとに角度を聞き直すのは、温度の変化をそのまま次回の間隔に
- * 反映させるため。設定で切ることもできる。
+ * 押した直後に**次回の追客日を出す**のが要点。押すと行が消えるので、
+ * 何も出さないと「連絡したらこの人は終わり」に見えてしまう。実際は
+ * 追客終了を押すまで何度でも戻ってくるので、それを毎回その場で見せる。
  */
 export function TodayActions({
   entryId,
@@ -41,6 +45,7 @@ export function TodayActions({
   const [step, setStep] = useState<Step>('idle')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [doneText, setDoneText] = useState<string | null>(null)
 
   async function send(payload: Record<string, unknown>): Promise<Record<string, unknown> | null> {
     setBusy(true)
@@ -65,38 +70,57 @@ export function TodayActions({
     }
   }
 
-  async function onCalled(): Promise<void> {
+  /** 結果を見せてから、少し置いて一覧を更新する */
+  function finish(text: string): void {
+    setDoneText(text)
+    setStep('done')
+    setTimeout(() => router.refresh(), DONE_MS)
+  }
+
+  function nextText(body: Record<string, unknown> | null, prefix: string): string {
+    const dueAt = typeof body?.dueAt === 'string' ? body.dueAt : null
+    if (!dueAt) return `${prefix}。次の追客は予定されていません`
+    return `${prefix}。次は ${formatDue(dueAt)} にまた出ます`
+  }
+
+  async function onDone(): Promise<void> {
     // 聞き直す設定なら、まず角度を選ばせる。先に次回をセットすると、
     // 角度を選ばずに離れたときに古い間隔のまま残ってしまう
     if (askAngleAfterCall) {
       setStep('angle')
       return
     }
-    if (await send({ action: 'called' })) router.refresh()
+    const body = await send({ action: 'called' })
+    if (body) finish(nextText(body, '対応済みにしました'))
   }
 
   async function onAngle(angle: number): Promise<void> {
-    if (await send({ action: 'angle', angle })) {
-      setStep('idle')
-      router.refresh()
-    }
+    const body = await send({ action: 'angle', angle })
+    if (body) finish(nextText(body, `対応済み・角度${angle}`))
   }
 
   async function onNoAnswer(): Promise<void> {
-    if (await send({ action: 'noanswer' })) router.refresh()
+    const body = await send({ action: 'noanswer' })
+    if (body) finish(nextText(body, 'つながらなかった'))
   }
 
-  async function onEnd(outcome: string): Promise<void> {
-    if (await send({ action: 'end', outcome })) {
-      setStep('idle')
-      router.refresh()
-    }
+  async function onEnd(outcome: string, label: string): Promise<void> {
+    const body = await send({ action: 'end', outcome })
+    if (body) finish(`追客を終了しました（${label}）。今日やることから外れます`)
+  }
+
+  if (step === 'done') {
+    return (
+      <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
+        ✓ {doneText}
+      </p>
+    )
   }
 
   if (step === 'angle') {
     return (
       <div className="flex flex-col gap-2">
-        <p className="text-xs text-slate-600">電話しました。いまの角度は？</p>
+        <p className="text-xs text-slate-600">対応しました。いまの角度は？</p>
         <div className="flex flex-wrap gap-1.5">
           {ANGLES.map((a) => (
             <button
@@ -125,7 +149,9 @@ export function TodayActions({
   if (step === 'outcome') {
     return (
       <div className="flex flex-col gap-2">
-        <p className="text-xs text-slate-600">{customerName} 様の追客を終わります。理由は？</p>
+        <p className="text-xs text-slate-600">
+          {customerName} 様の追客を<strong>終わります</strong>。理由は？
+        </p>
         <div className="flex flex-wrap gap-1.5">
           {OUTCOMES.map((o) => (
             <button
@@ -133,7 +159,7 @@ export function TodayActions({
               type="button"
               disabled={busy}
               className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 disabled:opacity-50"
-              onClick={() => void onEnd(o.value)}
+              onClick={() => void onEnd(o.value, o.label)}
             >
               {o.label}
             </button>
@@ -146,6 +172,7 @@ export function TodayActions({
             やめる
           </button>
         </div>
+        <p className="text-[11px] text-slate-500">終了すると、今日やることにもLINEにも出なくなります。</p>
         {error ? <p className="text-xs text-red-600">{error}</p> : null}
       </div>
     )
@@ -158,9 +185,9 @@ export function TodayActions({
           type="button"
           disabled={busy}
           className="btn-primary px-3 py-2 text-sm disabled:opacity-50"
-          onClick={() => void onCalled()}
+          onClick={() => void onDone()}
         >
-          電話した
+          対応済み
         </button>
         <button
           type="button"
@@ -182,4 +209,13 @@ export function TodayActions({
       {error ? <p className="text-xs text-red-600">{error}</p> : null}
     </div>
   )
+}
+
+function formatDue(iso: string): string {
+  return new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+  }).format(new Date(iso))
 }
