@@ -345,7 +345,7 @@ async function main(): Promise<void> {
 
   console.log('\n⑮ 追客の担当と顧客の担当は同じ人（持ち場所が1つしかない）')
   {
-    const other = await prisma.staff.create({ data: { name: '桝谷', active: true } })
+    const other = await prisma.staff.create({ data: { name: '舛谷', active: true } })
     const c = await prisma.customer.create({ data: { name: '引き継ぎ 太郎', assigneeId: staff.id } })
     const first = await setAngle({ customerId: c.id, angle: 4, staffId: staff.id }, ctx)
 
