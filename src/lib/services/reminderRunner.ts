@@ -413,7 +413,7 @@ async function processConversation(
     return { kind: 'DEFERRED', delivery }
   }
 
-  const { results, anySucceeded } = await dispatchNotification(targets, bodyText, quick)
+  const { results, anySucceeded } = await dispatchNotification(targets, bodyText, quick, 'REMINDER')
   return { kind: 'DONE', outcome: await finalizeDelivery(delivery, results, anySucceeded) }
 }
 
@@ -546,7 +546,7 @@ async function runWatchdog(ctx: PolicyContext, directory: NotifyDirectory, now: 
     } catch {
       continue // 直近1時間で既に通知済み
     }
-    if (adminTargets.length > 0) await dispatchNotification(adminTargets, body)
+    if (adminTargets.length > 0) await dispatchNotification(adminTargets, body, undefined, 'WATCHDOG')
     else await dispatchFallback(body)
     await prisma.conversation.update({
       where: { id: conv.id },
@@ -589,7 +589,7 @@ async function flushDigest(deliveries: PendingDelivery[]): Promise<{ sent: numbe
 
   for (const { target, items } of byTarget.values()) {
     const text = buildDigestText(items.map((d) => d.digestEntry))
-    const { results } = await dispatchNotification([target], text)
+    const { results } = await dispatchNotification([target], text, undefined, 'REMINDER')
     const r = results[0]
     for (const d of items) {
       record(d, { target, ok: r?.ok ?? false, error: r?.error })

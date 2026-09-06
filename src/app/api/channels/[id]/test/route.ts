@@ -20,6 +20,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { results, anySucceeded } = await dispatchNotification(
       [{ channel: channel.type, target: channel.target, label: channel.name, role: 'GROUP' }],
       '✅ 未返信リマインドシステムのテスト送信です。このメッセージが届いていれば通知設定は正常です。',
+      undefined,
+      'TEST',
     )
     return NextResponse.json({ ok: anySucceeded, results: results.map((r) => ({ ok: r.ok, error: r.error ?? null })) })
   } catch (e) {

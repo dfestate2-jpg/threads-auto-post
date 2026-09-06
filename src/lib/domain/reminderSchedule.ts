@@ -6,6 +6,16 @@ export type ScheduleKind = 'ROUTINE' | 'GUARD' | 'ESCALATION'
 export interface SchedulePolicy {
   /** 解決済みのリマインド間隔（分）。0 以下 = 通知しない */
   intervalMinutes: number
+  /**
+   * 回を追うごとに間隔を倍にしていくか。
+   * LINEの通数は「送信回数 × 届いた人数」で課金され、ライトプランは
+   * 上限を超えると **送信そのものができなくなる**（＝リマインドが止まる）。
+   * 同じ内容を1時間ごとに鳴らし続けるより、間隔を空けて長く鳴らし続けるほうが、
+   * 見逃さないという目的に対して通数あたりの効果が高い。
+   */
+  backoffEnabled?: boolean
+  /** バックオフの上限（分）。これ以上は間隔を広げない。0 以下 = 上限なし */
+  maxIntervalMinutes?: number
   /** 初回リマインドまでの待ち時間（分） */
   firstDelayMinutes: number
   /** 1サイクルの最大通知回数。0 = 無制限 */
@@ -62,6 +72,30 @@ export function resolveIntervalMinutes(
   return customerOverrideMinutes
 }
 
+/** バックオフの倍率。2 = 1回鳴るごとに間隔が倍になる */
+const BACKOFF_FACTOR = 2
+
+/**
+ * 「次の1通」までの間隔を求める。
+ *
+ * バックオフ有効時は、既に鳴らした回数だけ間隔を倍にしていく。
+ * 例（基準1時間・上限8時間）: 1h → 2h → 4h → 8h → 8h → …
+ * 顧客のメッセージから見た通知時刻は 1h, 2h, 4h, 8h, 16h… となり、
+ * 営業時間内に丸1日残った案件の通数が 11通 から 4通 程度まで落ちる。
+ *
+ * **エスカレーション（1時間・3時間・6時間）はこの影響を受けない。**
+ * あちらは経過時間そのものが閾値なので、間隔を広げても定刻どおりに発火する。
+ * 薄くなるのは「同じ内容の繰り返し」だけで、段階が上がる通知は従来どおり届く。
+ */
+export function effectiveIntervalMinutes(policy: SchedulePolicy, reminderCount: number): number {
+  if (!policy.backoffEnabled || reminderCount <= 1) return policy.intervalMinutes
+
+  const cap = policy.maxIntervalMinutes && policy.maxIntervalMinutes > 0 ? policy.maxIntervalMinutes : Infinity
+  const grown = policy.intervalMinutes * BACKOFF_FACTOR ** (reminderCount - 1)
+  // 指数は簡単に跳ね上がるので、必ず上限で頭を押さえる
+  return Math.min(grown, Math.max(cap, policy.intervalMinutes))
+}
+
 function advance(base: Date, minutes: number, policy: SchedulePolicy): Date {
   if (policy.countBusinessHoursOnly) return addBusinessMinutes(base, minutes, policy.calendar)
   return addMinutes(base, minutes)
@@ -87,10 +121,9 @@ export function computeNextReminderAt(state: ScheduleState, policy: SchedulePoli
     return { nextReminderAt: null, kind: 'ROUTINE', reason: 'MAX_REMINDERS_REACHED' }
   }
 
+  const interval = effectiveIntervalMinutes(policy, state.reminderCount)
   const fromAwaiting = advance(state.awaitingSince, policy.firstDelayMinutes, policy)
-  const fromLast = state.lastReminderAt
-    ? advance(state.lastReminderAt, policy.intervalMinutes, policy)
-    : null
+  const fromLast = state.lastReminderAt ? advance(state.lastReminderAt, interval, policy) : null
 
   let candidate = fromAwaiting
   let kind: ScheduleKind = 'ROUTINE'
@@ -115,7 +148,19 @@ export function computeNextReminderAt(state: ScheduleState, policy: SchedulePoli
 
   if (policy.maxSilenceGuardMinutes > 0) {
     const guardBase = state.lastReminderAt ?? state.firstUnrepliedAt
-    const guardAt = advance(guardBase, policy.maxSilenceGuardMinutes, policy)
+    /**
+     * 保険が守るのは「顧客の連投で起点が後ろへ動き続け、いつまでも鳴らない」ことであって、
+     * **意図して広げた間隔を縮めることではない。**
+     * 上限をそのまま当てると保険がバックオフを打ち消す
+     * （上限3時間なら、間隔を8時間に広げても3時間で鳴ってしまう）。
+     *
+     * そこで **バックオフ有効時に限り**、「上限」と「今の間隔」の長いほうを
+     * 無通知の許容幅とする。バックオフを使っていない設定の挙動は一切変えない。
+     */
+    const guardMinutes = policy.backoffEnabled
+      ? Math.max(policy.maxSilenceGuardMinutes, interval)
+      : policy.maxSilenceGuardMinutes
+    const guardAt = advance(guardBase, guardMinutes, policy)
     if (guardAt.getTime() < candidate.getTime()) {
       candidate = guardAt
       kind = 'GUARD'

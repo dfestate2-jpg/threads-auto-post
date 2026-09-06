@@ -393,6 +393,17 @@ model AppSettings {
   /// 経過時間を営業時間のみでカウントする（false = 実時間）
   countBusinessHoursOnly Boolean @default(false)
 
+  /// リマインドの間隔を回を追うごとに倍にする（1h→2h→4h→8h）。
+  /// LINEの通数はライトプランで上限に達すると送信できなくなるため、
+  /// 同じ内容を鳴らし続けるより間隔を空けて長く鳴らすほうが目的に合う。
+  reminderBackoffEnabled     Boolean @default(true)
+  /// バックオフの上限（分）。これ以上は間隔を広げない。0 = 上限なし
+  maxReminderIntervalMinutes Int     @default(480)
+
+  /// LINE公式アカウントの月間無料メッセージ通数（ライトプラン = 5,000）。
+  /// 「あと何通で止まるか」を出すためだけに使う値で、送信は止めない。
+  lineMonthlyFreeQuota Int @default(5000)
+
   /// 【保険】firstUnrepliedAt からこの分数を超えたら、起点リセットに関係なく強制通知
   maxSilenceGuardMinutes Int @default(180)
   /// 配信予定を過ぎてこの分数以上滞留したら異常とみなし要確認＋管理者通知
@@ -422,6 +433,29 @@ model AppSettings {
   updatedAt DateTime @updatedAt
 
   @@map("app_settings")
+}
+
+/// LINEの消費通数の実測記録。
+///
+/// ライトプランは無料通数を超えると **送信そのものができなくなる**（追加購入不可）。
+/// つまり枯渇＝リマインドの停止であり、「あと何通か」を推測で運用してはいけない。
+/// 送信に成功した分だけを1件ずつ残し、実測で残量と月末予測を出す。
+///
+/// 記録は dispatcher で行う。未返信リマインドも追客通知もテスト送信も
+/// 同じチャネルの通数を食うため、送信の出口で数えないと必ず取りこぼす。
+model MessageUsage {
+  id      String      @id @default(cuid())
+  sentAt  DateTime    @default(now())
+  channel ChannelType
+  /// 宛先（groupId / userId / URL）。どこ宛てが効いているかを後から追える
+  target  String
+  /// この送信で消費した通数。グループは人数分、Webhookは0
+  units   Int
+  /// 何の通知か（REMINDER / FOLLOWUP / WATCHDOG / TEST / OTHER）
+  purpose String
+
+  @@index([sentAt])
+  @@map("message_usage")
 }
 
 /// 祝日・臨時休業日 / 臨時営業日
@@ -460,15 +494,18 @@ model EscalationRule {
 
 /// 社内通知チャネル
 model NotificationChannel {
-  id        String         @id @default(cuid())
-  name      String
-  type      ChannelType
+  id          String         @id @default(cuid())
+  name        String
+  type        ChannelType
   /// LINE の groupId / userId、または Webhook URL
-  target    String
-  purpose   ChannelPurpose @default(DEFAULT_GROUP)
-  enabled   Boolean        @default(true)
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
+  target      String
+  purpose     ChannelPurpose @default(DEFAULT_GROUP)
+  /// LINEグループの人数。通数は「送信回数 × 届いた人数」で数えるため、
+  /// これが分からないと実際の消費通数を出せない。個人宛て・Webhookでは使わない
+  memberCount Int?
+  enabled     Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   @@index([purpose, enabled])
   @@map("notification_channels")
@@ -695,23 +732,23 @@ model MessageTemplate {
 ///
 /// 新しいシステムが増えてもコード修正は不要（行を足すだけ）。
 model PortalSystem {
-  id          String  @id @default(cuid())
-  name        String
+  id           String   @id @default(cuid())
+  name         String
   /// カードに大きく出すアイコン（絵文字）
-  icon        String  @default("🔗")
+  icon         String   @default("🔗")
   /// カードの色。Tailwind のクラス名はコード側の対応表で解決する
-  accent      String  @default("slate")
-  description String?
+  accent       String   @default("slate")
+  description  String?
   /// 遷移先。https:// の絶対URL、または同一サイト内の /path
-  url         String
+  url          String
   /// 別タブで開くか（外部システムは既定で別タブ）
-  openInNewTab Boolean @default(true)
+  openInNewTab Boolean  @default(true)
   /// 表示順。小さいほど先に出る
-  sortOrder   Int      @default(0)
+  sortOrder    Int      @default(0)
   /// 非公開にするとトップページから消える（削除ではないので後から戻せる）
-  published   Boolean  @default(true)
+  published    Boolean  @default(true)
   /// このシステムを開ける最低権限。将来のシステム別アクセス権限の土台
-  minRole     UserRole @default(STAFF)
+  minRole      UserRole @default(STAFF)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
