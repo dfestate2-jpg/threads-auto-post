@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import { LogoutButton } from './LogoutButton'
+import { ThemeToggle } from './ThemeToggle'
 
 const NAV = [
   // 追客ボード。営業が毎日触るのはこの3つだけ
@@ -33,7 +34,10 @@ export function AppShell({ children, alert }: { children: React.ReactNode; alert
             <Link href="/" className="text-base font-bold leading-tight sm:text-lg">
               追客管理＆リマインドシステム
             </Link>
-            <LogoutButton />
+            <div className="flex flex-none items-center gap-3">
+              <ThemeToggle />
+              <LogoutButton />
+            </div>
           </div>
           <nav className="-mx-1 flex gap-1 overflow-x-auto pb-1 pt-2 sm:pt-3">
             {NAV.map((n) => (
