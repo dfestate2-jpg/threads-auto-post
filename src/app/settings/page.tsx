@@ -36,6 +36,9 @@ export default async function SettingsPage() {
     respectBusinessHours: settings.respectBusinessHours,
     openOnPublicHolidays: settings.openOnPublicHolidays,
     countBusinessHoursOnly: settings.countBusinessHoursOnly,
+    reminderBackoffEnabled: settings.reminderBackoffEnabled,
+    maxReminderIntervalMinutes: settings.maxReminderIntervalMinutes,
+    lineMonthlyFreeQuota: settings.lineMonthlyFreeQuota,
     maxSilenceGuardMinutes: settings.maxSilenceGuardMinutes,
     watchdogDelayMinutes: settings.watchdogDelayMinutes,
     alwaysNotifyDefaultGroup: settings.alwaysNotifyDefaultGroup,
@@ -89,6 +92,7 @@ export default async function SettingsPage() {
             target: c.target,
             purpose: c.purpose,
             enabled: c.enabled,
+            memberCount: c.memberCount,
           }))}
           envGroupConfigured={!!env.internalSlackWebhookUrl || !!env.internalLineGroupId}
         />

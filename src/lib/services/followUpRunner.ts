@@ -148,7 +148,7 @@ async function notifyStaffOfDueAction(
     },
   })
 
-  const { anySucceeded } = await dispatchNotification(targets, text)
+  const { anySucceeded } = await dispatchNotification(targets, text, undefined, 'FOLLOWUP')
   return anySucceeded
 }
 

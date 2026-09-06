@@ -32,6 +32,9 @@ export interface GeneralSettings {
   openOnPublicHolidays: boolean
   countBusinessHoursOnly: boolean
   maxSilenceGuardMinutes: number
+  reminderBackoffEnabled: boolean
+  maxReminderIntervalMinutes: number
+  lineMonthlyFreeQuota: number
   watchdogDelayMinutes: number
   alwaysNotifyDefaultGroup: boolean
   digestRepeatReminders: boolean
@@ -155,6 +158,36 @@ export function GeneralForm({ initial, appBaseUrl }: { initial: GeneralSettings;
         </div>
 
         <div>
+          <label className="label">間隔を広げる上限（分）</label>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={10080}
+            value={s.maxReminderIntervalMinutes}
+            onChange={(e) => setS({ ...s, maxReminderIntervalMinutes: Number(e.target.value) })}
+          />
+          <p className="hint">
+            下の「間隔を広げていく」がONのとき、ここまで間隔を広げます。480 = 8時間。0 で上限なし。
+          </p>
+        </div>
+
+        <div>
+          <label className="label">LINEの月間無料メッセージ通数</label>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={1000000}
+            value={s.lineMonthlyFreeQuota}
+            onChange={(e) => setS({ ...s, lineMonthlyFreeQuota: Number(e.target.value) })}
+          />
+          <p className="hint">
+            ダッシュボードの残量表示に使う値です。ライトプラン = 5,000。送信自体を止めることはありません。
+          </p>
+        </div>
+
+        <div>
           <label className="label">通知に載せるメッセージの文字数</label>
           <input
             className="input"
@@ -177,6 +210,10 @@ export function GeneralForm({ initial, appBaseUrl }: { initial: GeneralSettings;
             [
               'digestRepeatReminders',
               '2回目以降のリマインドを1通にまとめる（初回とエスカレーションはボタン付きの個別通知のまま）',
+            ],
+            [
+              'reminderBackoffEnabled',
+              'リマインドの間隔を回を追うごとに広げる（1時間→2時間→4時間→8時間）。エスカレーションは定刻どおり発火します',
             ],
             ['includeMessageBodyInNotification', '通知に顧客メッセージの本文を含める'],
           ] as const
