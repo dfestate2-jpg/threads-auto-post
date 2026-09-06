@@ -3,9 +3,13 @@ import Link from 'next/link'
 import { LogoutButton } from './LogoutButton'
 
 const NAV = [
-  { href: '/', label: '今日やること' },
-  { href: '/customers', label: '顧客' },
+  // 追客ボード。営業が毎日触るのはこの3つだけ
+  { href: '/board/today', label: '今日やること' },
+  { href: '/board', label: '通話メモ' },
+  { href: '/board/list', label: '追客一覧' },
+  // ここから下はリマインドシステム側。触っていない
   { href: '/reminders', label: '未返信' },
+  { href: '/customers', label: '顧客' },
   { href: '/admin', label: '管理者' },
   { href: '/settings', label: '設定' },
   // 他の業務システムへ戻れる入口。ここから行き来できないと、
