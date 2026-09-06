@@ -122,6 +122,7 @@ model Staff {
   updatedAt     DateTime  @updatedAt
 
   customers    Customer[]
+  boardEntries BoardEntry[]    @relation("BoardAssignee")
   sentMessages Message[]
   users        User[]
   linkCodes    StaffLinkCode[]
@@ -243,6 +244,8 @@ model Customer {
   messages     Message[]
   reminders    Reminder[]
   followUpLogs FollowUpLog[]
+  /// 追客ボード側の状態。列は増えない（Prisma が要求する逆側の宣言）
+  boardEntry   BoardEntry?
 
   @@index([assigneeId])
   @@index([blocked])
@@ -755,4 +758,160 @@ model PortalSystem {
 
   @@index([published, sortOrder])
   @@map("portal_systems")
+}
+
+// ---------------------------------------------------------------------------
+// 追客ボード
+//
+// リマインド（未返信検知）とは完全に独立した仕組み。
+// 既存のテーブルには一切書き込まず、Customer と Staff は読むだけ。
+// 下の逆リレーション 2つは Prisma が要求するもので、列は増えない。
+// ---------------------------------------------------------------------------
+
+/// 追客を終えた理由
+enum BoardOutcome {
+  /// うちで契約になった
+  CONTRACTED
+  /// 他社で決まった
+  LOST_OTHER
+  /// 見込みなし
+  NO_CHANCE
+}
+
+enum BoardEventType {
+  /// 角度を付けた・変えた
+  ANGLE_SET
+  /// 通話メモを登録した
+  CALL_MEMO
+  /// 電話した
+  CALLED
+  /// つながらなかった
+  NO_ANSWER
+  /// 追客を終えた
+  ENDED
+  /// 通知を送った
+  NOTIFIED
+}
+
+/// 顧客1人ぶんの追客状態。角度と次回追客日だけを持つ。
+model BoardEntry {
+  id         String   @id @default(cuid())
+  customerId String   @unique
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  /// 熱意角度 1〜5。null = まだ判断していない（拾い上げの候補）
+  angle      Int?
+  /// 追客の担当者。顧客の担当とは別に持つ（引き継いでも顧客側を書き換えないため）
+  assigneeId String?
+  assignee   Staff?  @relation("BoardAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  /// 次回追客の通知時刻。null = 追客しない（角度なし / 角度1 / 終了済み）
+  dueAt          DateTime?
+  /// 反応がないまま繰り返した回数。間隔を空けるのに使う
+  noAnswerStreak Int       @default(0)
+
+  /// 直近の通話メモから引き継いだ、通知本文に出す内容
+  customerTask String?
+  staffTask    String?
+
+  /// 最後に営業が動いた時刻
+  lastActionAt DateTime?
+  /// 最後に通知した日（Asia/Tokyo の YYYY-MM-DD）。1日1通に抑えるため
+  notifiedOn   String?
+
+  endedAt      DateTime?
+  endedOutcome BoardOutcome?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memos  BoardCallMemo[]
+  events BoardEvent[]
+
+  /// Cron が期限到来分を引くための索引
+  @@index([dueAt])
+  @@index([assigneeId, dueAt])
+  @@index([angle])
+  @@index([endedAt])
+  @@map("board_entries")
+}
+
+/// 通話メモ。1顧客に何件でも残る
+model BoardCallMemo {
+  id      String     @id @default(cuid())
+  entryId String
+  entry   BoardEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  /// 電話した日
+  calledOn DateTime
+  staffId  String?
+  /// 登録時点の角度
+  angle    Int
+
+  customerTask String?
+  staffTask    String?
+  /// 手で期限を上書きした場合の日付
+  dueOverride  DateTime?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([entryId, calledOn])
+  @@map("board_call_memos")
+}
+
+/// 何がいつ起きたかの記録。あとで「誰の角度5が契約になったか」を出すために使う
+model BoardEvent {
+  id      String     @id @default(cuid())
+  entryId String
+  entry   BoardEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  type        BoardEventType
+  angleBefore Int?
+  angleAfter  Int?
+  outcome     BoardOutcome?
+  staffId     String?
+  /// 画面にそのまま出せる短い説明
+  detail      String?
+
+  at DateTime @default(now())
+
+  @@index([entryId, at])
+  @@index([type, at])
+  @@map("board_events")
+}
+
+/// 追客ボードの設定。1行だけ持つ
+model BoardSettings {
+  id String @id @default("singleton")
+
+  /// 角度ごとの追客間隔。カンマ区切りの日数で、反応がないほど右へ進む。
+  /// 最後の数字はそのまま繰り返す。末尾に end を書くと打ち切る。off は追わない。
+  /// 例：3,5,7 → 3日後、反応なしなら5日後、以降は7日おき
+  angle5Ladder String @default("2")
+  angle4Ladder String @default("3,5,7")
+  angle3Ladder String @default("7,14,30")
+  angle2Ladder String @default("14,30,end")
+  angle1Ladder String @default("off")
+
+  /// 通知する時刻（Asia/Tokyo）
+  notifyHour   Int @default(9)
+  notifyMinute Int @default(0)
+
+  /// 担当者個人のLINEへ送る
+  notifyToStaff Boolean @default(true)
+  /// 社内グループへも送る
+  notifyToGroup Boolean @default(false)
+  /// 1人あたり1日の上限。超えた分はまとめて1通にする
+  dailyLimit    Int     @default(20)
+
+  /// 「電話した」のあとに角度を聞き直す
+  askAngleAfterCall Boolean @default(true)
+
+  /// 通知本文。{顧客名} {角度} {経過} {お客さんのタスク} {自分のタスク} が使える
+  messageTemplate String?
+
+  updatedAt DateTime @updatedAt
+
+  @@map("board_settings")
 }
