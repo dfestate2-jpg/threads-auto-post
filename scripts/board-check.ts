@@ -327,7 +327,7 @@ async function main(): Promise<void> {
     check('20日後には期限切れになる', parseBoardToken(token, old) === null)
   }
 
-  console.log('\n⑭ リマインドのテーブルに書き込んでいない（顧客は担当だけ書く）')
+  console.log('\n⑭ リマインドの中核テーブルには書き込まない')
   {
     const convs = await prisma.conversation.count()
     const reminders = await prisma.reminder.count()
@@ -336,11 +336,16 @@ async function main(): Promise<void> {
     check('リマインドを作っていない', reminders === 0, { reminders })
     check('メッセージを作っていない', messages === 0, { messages })
 
-    // 顧客に書くのは担当（assigneeId）だけ。旧・追客の列には触らない
-    const touched = await prisma.customer.count({
-      where: { OR: [{ nextActionAt: { not: null } }, { lastContactAt: { not: null } }, { followUpStep: { not: 0 } }] },
+    // 顧客テーブルに書くのは2つだけ：担当（assigneeId）と、追客終了時のステータス。
+    // 最終接触日は動かさない——追客を終える操作は「連絡した」ではない
+    const contacted = await prisma.customer.count({ where: { lastContactAt: { not: null } } })
+    check('最終接触日は動かさない', contacted === 0, { contacted })
+
+    // 終了していない人の次回アクションには触れない（リマインド側の持ち物）
+    const active = await prisma.customer.count({
+      where: { status: { notIn: ['CONTRACTED', 'LOST'] }, nextActionAt: { not: null } },
     })
-    check('顧客の旧・追客カラムは書き換えない（担当だけ書く）', touched === 0, { touched })
+    check('追客中の人の次回アクションには触れない', active === 0, { active })
   }
 
   console.log('\n⑮ 追客の担当と顧客の担当は同じ人（持ち場所が1つしかない）')
@@ -465,6 +470,84 @@ async function main(): Promise<void> {
       where: { id: entry.id, endedAt: null, dueAt: { not: null } },
     })
     check('通知の対象からも外れる', stillDue === 0)
+  }
+
+  console.log('\n⑱ 追客終了を押すと、顧客一覧からも同時に消える')
+  {
+    const live = await loadBoardContext()
+
+    // (1) 他社で契約した → 失注
+    const lost = await prisma.customer.create({
+      data: { name: '他社決まり 太郎', status: 'PROPOSING', assigneeId: staff.id },
+    })
+    const lostEntry = await setAngle({ customerId: lost.id, angle: 5, staffId: staff.id }, live)
+    check('追客に入っている', lostEntry.dueAt !== null)
+
+    await actEnd(lostEntry.entry.id, BoardOutcome.LOST_OTHER, staff.id, live)
+    const lostAfter = await prisma.customer.findUniqueOrThrow({ where: { id: lost.id } })
+    check('**顧客のステータスが失注になる**', lostAfter.status === 'LOST', { status: lostAfter.status })
+    check('失注日が記録される', lostAfter.lostAt !== null)
+    check('失注理由に「他社で契約した」が残る', (lostAfter.lostReason ?? '').includes('他社で契約した'))
+    check('次回アクションが消える＝顧客一覧の期限に出てこない', lostAfter.nextActionAt === null)
+    check('最終接触日は動かない（終了は連絡ではない）', lostAfter.lastContactAt === null)
+
+    // (2) うちで契約した → 成約
+    const won = await prisma.customer.create({
+      data: { name: '自社決まり 花子', status: 'APPLIED', assigneeId: staff.id },
+    })
+    const wonEntry = await setAngle({ customerId: won.id, angle: 4, staffId: staff.id }, live)
+    await actEnd(wonEntry.entry.id, BoardOutcome.CONTRACTED, staff.id, live)
+    const wonAfter = await prisma.customer.findUniqueOrThrow({ where: { id: won.id } })
+    check('**うちで契約 → 成約になる**', wonAfter.status === 'CONTRACTED', { status: wonAfter.status })
+    check('成約日が記録される', wonAfter.contractedAt !== null)
+
+    // (3) 見込みなし → 失注
+    const none = await prisma.customer.create({
+      data: { name: '見込みなし 次郎', status: 'HEARING_DONE', assigneeId: staff.id },
+    })
+    const noneEntry = await setAngle({ customerId: none.id, angle: 3, staffId: staff.id }, live)
+    await actEnd(noneEntry.entry.id, BoardOutcome.NO_CHANCE, staff.id, live)
+    const noneAfter = await prisma.customer.findUniqueOrThrow({ where: { id: none.id } })
+    check('見込みなし → 失注になる', noneAfter.status === 'LOST', { status: noneAfter.status })
+
+    // (4) 話が戻ったとき。角度を付け直すと、顧客一覧にも戻ってくる
+    const back = await setAngle({ customerId: lost.id, angle: 5, staffId: staff.id }, live)
+    check('追客が再開する', back.ended === false && back.dueAt !== null)
+    const backAfter = await prisma.customer.findUniqueOrThrow({ where: { id: lost.id } })
+    check('**ステータスが元（物件提案中）に戻る**', backAfter.status === 'PROPOSING', { status: backAfter.status })
+    // 追客の日付は「次回追客」に持つ。顧客一覧の「次回アクション」には入れない
+    check('再開しても次回アクションは空のまま（日付の持ち場所は1つ）', backAfter.nextActionAt === null, {
+      nextActionAt: backAfter.nextActionAt,
+    })
+    const backEntry = await prisma.boardEntry.findUniqueOrThrow({ where: { id: lostEntry.entry.id } })
+    check('戻し先は使い切って消える', backEntry.statusBefore === null)
+
+    // (5) 二度押ししても、状態が二重に動かない
+    await actEnd(wonEntry.entry.id, BoardOutcome.CONTRACTED, staff.id, live)
+    const twice = await prisma.customer.findUniqueOrThrow({ where: { id: won.id } })
+    check('同じ終了を二度押しても成約のまま', twice.status === 'CONTRACTED')
+    const twiceEntry = await prisma.boardEntry.findUniqueOrThrow({ where: { id: wonEntry.entry.id } })
+    check('二度目で戻し先を上書きしない', twiceEntry.statusBefore === 'APPLIED', {
+      statusBefore: twiceEntry.statusBefore,
+    })
+
+    // (6) もともと失注だった人を、勝手に動かさない
+    const already = await prisma.customer.create({
+      data: { name: 'もとから失注 三郎', status: 'LOST', assigneeId: staff.id },
+    })
+    const alreadyEntry = await setAngle({ customerId: already.id, angle: 2, staffId: staff.id }, live)
+    await actEnd(alreadyEntry.entry.id, BoardOutcome.LOST_OTHER, staff.id, live)
+    await setAngle({ customerId: already.id, angle: 5, staffId: staff.id }, live)
+    const alreadyAfter = await prisma.customer.findUniqueOrThrow({ where: { id: already.id } })
+    check('もとから失注の人は失注のまま（勝手に戻さない）', alreadyAfter.status === 'LOST', {
+      status: alreadyAfter.status,
+    })
+
+    // 会話・リマインドは、ここまでで1件も作られていない
+    const convs = await prisma.conversation.count()
+    const reminders = await prisma.reminder.count()
+    check('ここまでで会話を作っていない', convs === 0, { convs })
+    check('ここまででリマインドを作っていない', reminders === 0, { reminders })
   }
 
   console.log(failures === 0 ? '\n✅ 全項目 合格' : `\n❌ ${failures}件 失敗`)

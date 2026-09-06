@@ -821,6 +821,12 @@ model BoardEntry {
 
   endedAt      DateTime?
   endedOutcome BoardOutcome?
+  /// 追客終了を押した時点の顧客ステータス。
+  ///
+  /// 終了すると顧客側も「成約」「失注」に変わるが、あとから角度を付け直して
+  /// 追客を再開したときに**元へ戻せないと、顧客一覧から消えたままになる。**
+  /// 戻し先を覚えておくためだけの列で、再開時に使ったら null に戻す。
+  statusBefore CustomerStatus?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

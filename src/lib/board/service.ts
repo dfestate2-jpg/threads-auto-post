@@ -6,12 +6,28 @@
  * もう片方が古い動きのまま残る。前のシステムで実際に起きた事故なので繰り返さない。
  *
  * リマインドシステムのテーブル（Conversation / Reminder / Message）には
- * 一切書き込まない。Customer と Staff は読むだけ。
+ * 一切書き込まない。Staff も読むだけ。
+ *
+ * Customer に書くのは2つだけ：
+ *   - assigneeId（追客の担当＝顧客の担当を1つに保つため）
+ *   - status（追客終了を押したときの 成約 / 失注。→ syncCustomerStatus）
+ * どちらもリマインド側の関数（recordFollowUpAction）を通して書く。
+ * 自前で顧客テーブルを組み立てると、statusSince や失注日の記録が抜ける。
  */
-import { BoardEventType, BoardOutcome, type BoardEntry, type Prisma } from '@prisma/client'
+import {
+  ActionType,
+  BoardEventType,
+  BoardOutcome,
+  CustomerStatus,
+  FollowUpSource,
+  type BoardEntry,
+  type Prisma,
+} from '@prisma/client'
 
 import { dateKeyOf } from '@/lib/domain/time'
+import { isTerminalStatus } from '@/lib/domain/followUp'
 import { prisma } from '@/lib/prisma'
+import { loadFollowUpContext, recordFollowUpAction } from '@/lib/services/followUp'
 import { isAngle, nextDue, type Angle } from './ladder'
 import type { BoardContext } from './settings'
 
@@ -129,7 +145,7 @@ export interface SetAngleResult {
  * 電話したかどうかは問わない——これが「感度の高い人を拾う」ための入口。
  */
 export async function setAngle(input: SetAngleInput, ctx: BoardContext): Promise<SetAngleResult> {
-  return prisma.$transaction(async (tx) => {
+  const { result, previous } = await prisma.$transaction(async (tx) => {
     const entry = await ensureEntry(tx, input.customerId)
     const before = entry.angle
 
@@ -140,6 +156,8 @@ export async function setAngle(input: SetAngleInput, ctx: BoardContext): Promise
       // 終了済みの人に角度を付け直したら、追客を再開する
       endedAt: null,
       endedOutcome: null,
+      // 戻し先は使い切ったので消す。残すと次の再開で古い値へ戻してしまう
+      statusBefore: null,
       // 通知済みの印を外して、今日ぶんとして出せるようにする
       notifiedOn: null,
     })
@@ -152,8 +170,14 @@ export async function setAngle(input: SetAngleInput, ctx: BoardContext): Promise
       at: ctx.now,
     })
 
-    return { entry: updated, dueAt: updated.dueAt, ended: updated.endedAt !== null }
+    return {
+      result: { entry: updated, dueAt: updated.dueAt, ended: updated.endedAt !== null },
+      previous: entry,
+    }
   })
+
+  await restoreCustomerStatus(previous, input.staffId, ctx)
+  return result
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +204,7 @@ export interface CallMemoResult {
 
 /** 接客や電話のあと、ヒアリングシートを登録する。角度から次回追客日が自動で決まる */
 export async function addCallMemo(input: CallMemoInput, ctx: BoardContext): Promise<CallMemoResult> {
-  return prisma.$transaction(async (tx) => {
+  const { result, previous } = await prisma.$transaction(async (tx) => {
     const entry = await ensureEntry(tx, input.customerId)
     const before = entry.angle
 
@@ -190,6 +214,8 @@ export async function addCallMemo(input: CallMemoInput, ctx: BoardContext): Prom
       lastActionAt: ctx.now,
       endedAt: null,
       endedOutcome: null,
+      // 再開したので、控えていた戻し先は使い切り
+      statusBefore: null,
       notifiedOn: null,
     })
 
@@ -226,8 +252,14 @@ export async function addCallMemo(input: CallMemoInput, ctx: BoardContext): Prom
       at: ctx.now,
     })
 
-    return { entry: final, dueAt: final.dueAt, ended: final.endedAt !== null }
+    return {
+      result: { entry: final, dueAt: final.dueAt, ended: final.endedAt !== null },
+      previous: entry,
+    }
   })
+
+  await restoreCustomerStatus(previous, input.staffId, ctx)
+  return result
 }
 
 // ---------------------------------------------------------------------------
@@ -311,10 +343,25 @@ export async function actEnd(
   const entry = await prisma.boardEntry.findUnique({ where: { id: entryId } })
   if (!entry) throw new Error('追客の対象が見つかりません')
 
-  return prisma.$transaction(async (tx) => {
+  // 顧客側のステータスも動かすので、動かす前の値をここで押さえる。
+  // 再開したときの戻し先になる
+  const customer = await prisma.customer.findUnique({
+    where: { id: entry.customerId },
+    select: { status: true },
+  })
+
+  const result = await prisma.$transaction(async (tx) => {
     const updated = await tx.boardEntry.update({
       where: { id: entry.id },
-      data: { dueAt: null, endedAt: ctx.now, endedOutcome: outcome, lastActionAt: ctx.now, notifiedOn: null },
+      data: {
+        dueAt: null,
+        endedAt: ctx.now,
+        endedOutcome: outcome,
+        lastActionAt: ctx.now,
+        notifiedOn: null,
+        // すでに終了済みの人をもう一度終了しても、最初の値を上書きしない
+        ...(entry.endedAt === null && customer ? { statusBefore: customer.status } : {}),
+      },
     })
     await logEvent(tx, entry.id, BoardEventType.ENDED, {
       angleBefore: entry.angle,
@@ -326,6 +373,104 @@ export async function actEnd(
     })
     return { entry: updated, dueAt: null, ended: true, needsAngle: false }
   })
+
+  await syncCustomerStatus(entry.customerId, OUTCOME_STATUS[outcome], staffId, `追客終了：${OUTCOME_LABEL[outcome]}`, ctx)
+
+  return result
+}
+
+/**
+ * 追客終了の理由を、顧客のステータスに対応させる。
+ *
+ * ここを繋いでいないと、他社で決まった人が追客一覧からは消えるのに
+ * 顧客一覧には動いている人として残り続ける。半年で顧客一覧が
+ * 終わった人だらけになり、何件動いているのか読めなくなる。
+ */
+const OUTCOME_STATUS: Record<BoardOutcome, CustomerStatus> = {
+  CONTRACTED: CustomerStatus.CONTRACTED,
+  LOST_OTHER: CustomerStatus.LOST,
+  NO_CHANCE: CustomerStatus.LOST,
+}
+
+/**
+ * 顧客のステータスを変える。
+ *
+ * 自分で customer.update せず、リマインド側の記録関数を通す。
+ * ステータス変更には失注日・成約日・statusSince・履歴の記録が付いてくるので、
+ * 自前で組むと必ずどれかが抜ける。
+ *
+ * 追客ボードの更新とは別のトランザクションになる。ここが失敗しても
+ * 追客の終了は取り消さない——**取り消すと、営業が押したボタンが
+ * 効かなかったことになる**。片方だけ進んだ場合の見え方は、この機能を
+ * 入れる前とまったく同じ（追客は終了、顧客一覧には残る）なので、
+ * 悪化はしない。失敗はログに残して後から追えるようにする。
+ */
+async function syncCustomerStatus(
+  customerId: string,
+  status: CustomerStatus,
+  staffId: string | null,
+  note: string,
+  ctx: BoardContext,
+): Promise<void> {
+  try {
+    const current = await prisma.customer.findUnique({ where: { id: customerId }, select: { status: true } })
+    // すでにそのステータスなら触らない。二度押しで statusSince が動くのを防ぐ
+    if (!current || current.status === status) return
+
+    const followUpCtx = await loadFollowUpContext(ctx.now)
+    await recordFollowUpAction(
+      {
+        customerId,
+        staffId,
+        actionType: ActionType.OTHER,
+        source: FollowUpSource.MANUAL,
+        nextStatus: status,
+        lostReason: status === CustomerStatus.LOST ? note : null,
+        note,
+        occurredAt: ctx.now,
+        // 追客を終える操作であって、お客さまに連絡した訳ではない。
+        // 最終接触日は動かさない
+        touchContact: false,
+      },
+      followUpCtx,
+    )
+
+    // ステータスを戻すと、リマインド側が自分の「次回アクション」を引き直す。
+    // 追客の日付は「次回追客」に持っているので、ここに別の日付が入ると
+    // 顧客一覧と追客一覧で違う日が出てしまう。ボードが動かした顧客は、
+    // 次回アクションを常に空にしておく——**日付の持ち場所は1つ**。
+    //
+    // 終了させたときは終了系ステータスなので、もともと空になる。
+    // 消える情報も無い（終了時点で空になっている）
+    await prisma.customer.update({
+      where: { id: customerId },
+      data: { nextActionAt: null, nextActionType: null, nextActionNote: null },
+    })
+  } catch (e) {
+    console.error('[board] 顧客ステータスを合わせられませんでした', {
+      customerId,
+      status,
+      error: String(e),
+    })
+  }
+}
+
+/**
+ * 終了していた人の追客を再開したときに、顧客のステータスを元へ戻す。
+ *
+ * 戻さないと「追客は動いているのに顧客一覧には出てこない」という、
+ * 直そうとしている食い違いの裏返しが起きる。
+ *
+ * 戻すのは、こちらが終了させたときに控えた値がある場合だけ。
+ * もともと失注だった人を勝手に動かすことはしない。
+ */
+async function restoreCustomerStatus(entry: BoardEntry, staffId: string | null, ctx: BoardContext): Promise<void> {
+  const before = entry.statusBefore
+  if (entry.endedAt === null || before === null) return
+  // 控えた値そのものが終了系なら、戻す先が無い。ボード以前からの失注
+  if (isTerminalStatus(before)) return
+
+  await syncCustomerStatus(entry.customerId, before, staffId, '追客を再開', ctx)
 }
 
 export const OUTCOME_LABEL: Record<BoardOutcome, string> = {
