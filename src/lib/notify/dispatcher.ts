@@ -1,6 +1,7 @@
 import type { NotifyTarget } from '@/lib/domain/escalation'
 import { env } from '@/lib/env'
 import { pushTextMessage, pushTextWithActions, type LinePostbackAction } from '@/lib/line/client'
+import { recordMessageUsage, type UsagePurpose } from '@/lib/services/messageUsage'
 import { buildWebhookPayload } from './webhookPayload'
 
 export interface DeliveryResult {
@@ -67,11 +68,24 @@ export async function dispatchNotification(
   targets: NotifyTarget[],
   text: string,
   quick?: QuickActionOptions,
+  purpose: UsagePurpose = 'OTHER',
 ): Promise<{ results: DeliveryResult[]; anySucceeded: boolean }> {
   const results = await Promise.all(
     targets.map(async (target): Promise<DeliveryResult> => {
       try {
         await sendOne(target, text, quick)
+        /**
+         * 通数の計上は **送信の出口** で行う。
+         * 未返信リマインドも追客通知もテスト送信も同じチャネルの通数を食うので、
+         * 呼び出し側それぞれに数えさせると必ずどれかが漏れる。
+         *
+         * 記録に失敗しても通知は成功扱いのままにする。
+         * 集計が欠けることより、届いた通知を「失敗」と誤って記録して
+         * 再送・要確認に流すほうが実害が大きい。
+         */
+        await recordMessageUsage(target, purpose).catch((e: unknown) => {
+          console.error('[notify] 通数の記録に失敗しました', { error: String(e) })
+        })
         return { target, ok: true }
       } catch (e) {
         return { target, ok: false, error: e instanceof Error ? e.message : String(e) }

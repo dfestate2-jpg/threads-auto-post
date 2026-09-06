@@ -15,6 +15,8 @@ export function buildPolicy(ctx: PolicyContext, customerIntervalOverride: number
   const { settings, calendar } = ctx
   return {
     intervalMinutes: resolveIntervalMinutes(customerIntervalOverride, settings.defaultReminderIntervalMinutes),
+    backoffEnabled: settings.reminderBackoffEnabled,
+    maxIntervalMinutes: settings.maxReminderIntervalMinutes,
     firstDelayMinutes: settings.firstReminderDelayMinutes,
     maxRemindersPerCycle: settings.maxRemindersPerCycle,
     maxSilenceGuardMinutes: settings.maxSilenceGuardMinutes,

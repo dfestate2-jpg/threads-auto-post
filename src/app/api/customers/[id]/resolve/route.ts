@@ -6,6 +6,7 @@ import { assertSameOrigin, handleApiError, jsonError } from '@/lib/http'
 import { prisma } from '@/lib/prisma'
 import { loadPolicyContext } from '@/lib/services/context'
 import { markResolvedManually } from '@/lib/services/conversation'
+import { loadFollowUpContext } from '@/lib/services/followUp'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -33,7 +34,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
 
     const ctx = await loadPolicyContext()
-    const result = await markResolvedManually(id, { id: session.userId, staffId: session.staffId }, ctx, body.note)
+    const result = await markResolvedManually(
+      id,
+      { id: session.userId, staffId: session.staffId },
+      ctx,
+      await loadFollowUpContext(),
+      body.note,
+    )
 
     await prisma.auditLog.create({
       data: {

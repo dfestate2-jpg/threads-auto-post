@@ -12,6 +12,7 @@ import type { LineSource } from '@/lib/line/types'
 import { env } from '@/lib/env'
 import { prisma } from '@/lib/prisma'
 import { recordOutboundMessage } from './conversation'
+import { loadFollowUpContext } from './followUp'
 import type { PolicyContext } from './policy'
 
 export type QuickActionOutcome =
@@ -153,6 +154,7 @@ export async function applyQuickAction(
       raw: input.raw,
     },
     ctx,
+    await loadFollowUpContext(),
   )
 
   return {

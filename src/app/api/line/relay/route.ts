@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 
 import { authenticateRelay, readPresentedToken } from '@/lib/line/relayAuth'
+import { fanoutLineRelay } from '@/lib/line/relayFanout'
 import { describeShape, extractLineEvents } from '@/lib/line/relayPayload'
 import { env } from '@/lib/env'
 import { loadPolicyContext } from '@/lib/services/context'
@@ -82,6 +83,10 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const channel: ChannelKind = auth.via === 'LINE_SIGNATURE' ? auth.channel : 'MAIN'
   await processLineEvents(events, channel, await loadPolicyContext())
+
+  // 本来の処理が終わってから、もう1か所へそのまま流す。
+  // ここで何が起きても未返信の検知には影響しない（3秒で打ち切り、失敗しても投げない）
+  await fanoutLineRelay(rawBody, request.headers.get('x-line-signature'), env.relayFanoutUrl)
 
   return NextResponse.json({ ok: true, accepted: events.length })
 }

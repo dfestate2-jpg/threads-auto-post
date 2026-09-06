@@ -36,6 +36,9 @@ export default async function SettingsPage() {
     respectBusinessHours: settings.respectBusinessHours,
     openOnPublicHolidays: settings.openOnPublicHolidays,
     countBusinessHoursOnly: settings.countBusinessHoursOnly,
+    reminderBackoffEnabled: settings.reminderBackoffEnabled,
+    maxReminderIntervalMinutes: settings.maxReminderIntervalMinutes,
+    lineMonthlyFreeQuota: settings.lineMonthlyFreeQuota,
     maxSilenceGuardMinutes: settings.maxSilenceGuardMinutes,
     watchdogDelayMinutes: settings.watchdogDelayMinutes,
     alwaysNotifyDefaultGroup: settings.alwaysNotifyDefaultGroup,
@@ -56,7 +59,7 @@ export default async function SettingsPage() {
       <div className="space-y-6">
         {/* 入口が動いているかは最優先で目に入るべきなので先頭に置く */}
         <RelayReceiptTable rows={receipts} timezone={settings.timezone} />
-        <GeneralForm initial={general} />
+        <GeneralForm initial={general} appBaseUrl={env.appBaseUrl} />
         <EscalationForm
           initial={rules.map((r) => ({
             id: r.id,
@@ -89,6 +92,7 @@ export default async function SettingsPage() {
             target: c.target,
             purpose: c.purpose,
             enabled: c.enabled,
+            memberCount: c.memberCount,
           }))}
           envGroupConfigured={!!env.internalSlackWebhookUrl || !!env.internalLineGroupId}
         />

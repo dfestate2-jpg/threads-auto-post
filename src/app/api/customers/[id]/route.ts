@@ -115,7 +115,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (body.handlingStatus !== undefined && customer.conversation) {
       if (body.handlingStatus === HandlingStatus.DONE) {
         // 「対応済み」への変更はリマインドを止める確定操作として扱う
-        await markResolvedManually(id, { id: session.userId, staffId: session.staffId }, ctx)
+        await markResolvedManually(id, { id: session.userId, staffId: session.staffId }, ctx, followUpCtx)
       } else {
         await prisma.conversation.update({
           where: { id: customer.conversation.id },

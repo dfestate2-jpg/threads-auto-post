@@ -351,20 +351,42 @@ export async function onCustomerInbound(customerId: string, at: Date, ctx: Follo
  * 顧客へLINEを送ったときの追客状態の更新。
  * 管理画面からの返信・外部連携からの取り込みの両方から呼ばれる。
  */
-export async function onStaffOutbound(
-  customerId: string,
-  at: Date,
-  staffId: string | null,
+/** 返信・対応済みを記録したときに、追客側へ何を残すか */
+export interface OutboundFollowUpInput {
+  customerId: string
+  at: Date
+  staffId: string | null
+  /**
+   * 返信したあとも顧客を待たせている場合、その受信時刻。
+   * 返信より新しいメッセージが既に届いているケースで、
+   * 次回アクションを「返信する」のまま維持するために使う。
+   */
+  awaitingReplySince: Date | null
+  source: FollowUpSource
+  /** 追客履歴に残す一言（「LINE送信（管理画面）」「対応済みにした」など） */
+  result: string
+  note?: string | null
+}
+
+/**
+ * 顧客へ返信した／対応済みにしたときの追客状態の更新。
+ *
+ * **必ず recordOutboundMessage の中から、会話の更新と同じトランザクションで呼ぶこと。**
+ * 別々に更新すると、「対応済みにしたのに次回アクションが『返信する』のまま」という
+ * 食い違いが生まれる。実際にそれが起きたため、呼び出しを1か所に集約してある。
+ */
+export async function applyOutboundFollowUp(
+  db: Db,
+  input: OutboundFollowUpInput,
   ctx: FollowUpContext,
-  options?: { note?: string | null; source?: FollowUpSource },
 ): Promise<void> {
-  const customer = await prisma.customer.findUnique({ where: { id: customerId } })
+  const customer = await db.customer.findUnique({ where: { id: input.customerId } })
   if (!customer || isTerminalStatus(customer.status)) return
 
   // 新規反響への初回送信は「初回対応済」へ自動で進める
   const status = customer.status === CustomerStatus.NEW_INQUIRY ? CustomerStatus.FIRST_CONTACTED : customer.status
   const statusChanged = status !== customer.status
-  const statusSince = statusChanged ? at : customer.statusSince
+  const statusSince = statusChanged ? input.at : customer.statusSince
   const followUpStep = statusChanged ? 0 : customer.followUpStep + 1
 
   const state = computeFollowUpState(
@@ -375,28 +397,28 @@ export async function onStaffOutbound(
       autoFollowEnabled: customer.autoFollowEnabled,
       priorityOverride: customer.priorityOverride,
       moveInBy: customer.moveInBy,
-      awaitingReplySince: null,
+      awaitingReplySince: input.awaitingReplySince,
     },
     ctx,
   )
 
-  await prisma.customer.update({
-    where: { id: customerId },
-    data: { status, statusSince, followUpStep, lastContactAt: at, ...state },
+  await db.customer.update({
+    where: { id: input.customerId },
+    data: { status, statusSince, followUpStep, lastContactAt: input.at, ...state },
   })
 
-  await prisma.followUpLog.create({
+  await db.followUpLog.create({
     data: {
-      customerId,
-      staffId,
+      customerId: input.customerId,
+      staffId: input.staffId,
       actionType: ActionType.LINE,
-      source: options?.source ?? FollowUpSource.LINE_OUTBOUND,
-      result: 'LINE送信',
-      note: options?.note ?? null,
+      source: input.source,
+      result: input.result,
+      note: input.note ?? null,
       statusBefore: customer.status,
       statusAfter: status,
       scheduledFor: customer.nextActionAt,
-      occurredAt: at,
+      occurredAt: input.at,
     },
   })
 }

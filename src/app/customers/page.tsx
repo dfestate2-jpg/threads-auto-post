@@ -2,6 +2,7 @@ import { CustomerStatus, type Prisma } from '@prisma/client'
 import Link from 'next/link'
 
 import { AppShell } from '@/components/AppShell'
+import { AssigneeSelect } from '@/components/AssigneeSelect'
 import { CustomerListFilters } from '@/components/followup/CustomerListFilters'
 import { ActionBadge, CustomerStatusBadge, PriorityBadge, formatDateTimeJa } from '@/components/ui'
 import { requirePageSession } from '@/lib/auth/guard'
@@ -73,7 +74,8 @@ export default async function CustomersPage({
     Promise.all([
       prisma.customer.findMany({
         where,
-        include: { assignee: { select: { name: true } } },
+        // 担当者プルダウンは楽観ロックに会話の version を使う。LINE未連携の顧客には会話が無い
+        include: { assignee: { select: { name: true } }, conversation: { select: { version: true } } },
         // 期限が近い顧客ほど上。未設定（＝要判断）は最後に回す
         orderBy: [{ nextActionAt: { sort: 'asc', nulls: 'last' } }],
         skip: (page - 1) * PAGE_SIZE,
@@ -87,6 +89,7 @@ export default async function CustomersPage({
   )
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const staffOptions = staff.map((s) => ({ id: s.id, name: s.name }))
 
   return (
     <AppShell>
@@ -99,10 +102,10 @@ export default async function CustomersPage({
         </Link>
       </div>
 
-      <CustomerListFilters staff={staff.map((s) => ({ id: s.id, name: s.name }))} />
+      <CustomerListFilters staff={staffOptions} />
 
       <div className="card mt-4 overflow-x-auto">
-        <table className="w-full min-w-[1000px] text-sm">
+        <table className="w-full min-w-[1120px] text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs text-slate-600">
               <th className="px-3 py-2">優先</th>
@@ -139,8 +142,15 @@ export default async function CustomersPage({
                     <td className="px-3 py-2">
                       <CustomerStatusBadge status={c.status} />
                     </td>
-                    <td className="px-3 py-2 text-slate-700">
-                      {c.assignee?.name ?? <span className="text-orange-600">未設定</span>}
+                    <td className="px-3 py-2">
+                      <AssigneeSelect
+                        customerId={c.id}
+                        customerName={c.name ?? c.displayName ?? '（名称未登録）'}
+                        value={c.assigneeId}
+                        valueName={c.assignee?.name ?? null}
+                        staff={staffOptions}
+                        version={c.conversation?.version ?? null}
+                      />
                     </td>
                     <td className="px-3 py-2 text-xs text-slate-600">
                       {c.desiredArea ?? '—'}

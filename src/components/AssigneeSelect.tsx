@@ -30,7 +30,8 @@ export function AssigneeSelect({
   /** 現在の担当者名。選択肢に無い担当者を表示するために使う */
   valueName: string | null
   staff: { id: string; name: string }[]
-  version: number
+  /** 会話が無い顧客（LINE未連携）では null */
+  version: number | null
 }) {
   /**
    * 退職などで無効化された担当者が割り当たっていることがある。

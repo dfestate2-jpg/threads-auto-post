@@ -6,7 +6,7 @@ export function LogoutButton() {
   const router = useRouter()
   return (
     <button
-      className="text-sm text-slate-500 hover:text-slate-900"
+      className="whitespace-nowrap text-sm text-slate-500 hover:text-slate-900"
       onClick={async () => {
         await fetch('/api/auth/logout', { method: 'POST' })
         router.replace('/login')

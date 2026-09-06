@@ -32,6 +32,9 @@ export interface GeneralSettings {
   openOnPublicHolidays: boolean
   countBusinessHoursOnly: boolean
   maxSilenceGuardMinutes: number
+  reminderBackoffEnabled: boolean
+  maxReminderIntervalMinutes: number
+  lineMonthlyFreeQuota: number
   watchdogDelayMinutes: number
   alwaysNotifyDefaultGroup: boolean
   digestRepeatReminders: boolean
@@ -40,22 +43,32 @@ export interface GeneralSettings {
   notificationTemplate: string | null
 }
 
-/** 編集中の文面がどう届くかを、その場で見せるための見本 */
-const PREVIEW_VALUES: Record<string, string> = {
-  '{印}': '⚠️',
-  '{経過時間}': '1時間20分',
-  '{補足}': '',
-  '{顧客名}': '山田太郎',
-  '{担当者}': '内田翔太',
-  '{メッセージ}': '内見の件ですが、来週の土曜日は空いていますでしょうか？',
-  '{URL}': 'https://remindsystem.netlify.app/customers/abc123',
+/**
+ * 編集中の文面がどう届くかを、その場で見せるための見本。
+ *
+ * URLだけは実際の公開URL（APP_BASE_URL）から組み立てる。
+ * 見本にURLを直接書いておくと、独自ドメインに変えたときに
+ * 見本だけ古いURLのままになり、設定画面が嘘をつくことになる。
+ * 組み立て方は services/reminderRunner の detailUrl と揃えてある。
+ */
+function previewValues(appBaseUrl: string): Record<string, string> {
+  return {
+    '{印}': '⚠️',
+    '{経過時間}': '1時間20分',
+    '{補足}': '',
+    '{顧客名}': '山田太郎',
+    '{担当者}': '内田翔太',
+    '{メッセージ}': '内見の件ですが、来週の土曜日は空いていますでしょうか？',
+    '{URL}': appBaseUrl ? `${appBaseUrl.replace(/\/$/, '')}/customers/abc123` : '',
+  }
 }
 
-export function GeneralForm({ initial }: { initial: GeneralSettings }) {
+export function GeneralForm({ initial, appBaseUrl }: { initial: GeneralSettings; appBaseUrl: string }) {
   const router = useRouter()
   const [s, setS] = useState<GeneralSettings>(initial)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const preview = previewValues(appBaseUrl)
 
   function setDay(day: DayKey, patch: Partial<DayHours>) {
     setS((prev) => ({
@@ -145,6 +158,36 @@ export function GeneralForm({ initial }: { initial: GeneralSettings }) {
         </div>
 
         <div>
+          <label className="label">間隔を広げる上限（分）</label>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={10080}
+            value={s.maxReminderIntervalMinutes}
+            onChange={(e) => setS({ ...s, maxReminderIntervalMinutes: Number(e.target.value) })}
+          />
+          <p className="hint">
+            下の「間隔を広げていく」がONのとき、ここまで間隔を広げます。480 = 8時間。0 で上限なし。
+          </p>
+        </div>
+
+        <div>
+          <label className="label">LINEの月間無料メッセージ通数</label>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={1000000}
+            value={s.lineMonthlyFreeQuota}
+            onChange={(e) => setS({ ...s, lineMonthlyFreeQuota: Number(e.target.value) })}
+          />
+          <p className="hint">
+            ダッシュボードの残量表示に使う値です。ライトプラン = 5,000。送信自体を止めることはありません。
+          </p>
+        </div>
+
+        <div>
           <label className="label">通知に載せるメッセージの文字数</label>
           <input
             className="input"
@@ -167,6 +210,10 @@ export function GeneralForm({ initial }: { initial: GeneralSettings }) {
             [
               'digestRepeatReminders',
               '2回目以降のリマインドを1通にまとめる（初回とエスカレーションはボタン付きの個別通知のまま）',
+            ],
+            [
+              'reminderBackoffEnabled',
+              'リマインドの間隔を回を追うごとに広げる（1時間→2時間→4時間→8時間）。エスカレーションは定刻どおり発火します',
             ],
             ['includeMessageBodyInNotification', '通知に顧客メッセージの本文を含める'],
           ] as const
@@ -207,13 +254,18 @@ export function GeneralForm({ initial }: { initial: GeneralSettings }) {
 
         <div className="mt-3">
           <div className="mb-1 text-xs font-medium text-slate-600">届く見本</div>
+          {!appBaseUrl ? (
+            <p className="mb-1 text-xs text-orange-700">
+              サイトのURL（APP_BASE_URL）が未設定のため、通知に管理画面へのリンクが載りません。
+            </p>
+          ) : null}
           <pre className="whitespace-pre-wrap rounded-lg bg-slate-900 p-3 text-xs leading-relaxed text-slate-100">
             {renderNotificationTemplate(
               (s.notificationTemplate ?? '').trim() || DEFAULT_NOTIFICATION_TEMPLATE,
               {
-                ...PREVIEW_VALUES,
+                ...preview,
                 '{メッセージ}': s.includeMessageBodyInNotification
-                  ? PREVIEW_VALUES['{メッセージ}']!.slice(0, s.messageExcerptLength)
+                  ? preview['{メッセージ}']!.slice(0, s.messageExcerptLength)
                   : '',
               },
             )}
