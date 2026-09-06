@@ -24,8 +24,10 @@ export function AppShell({ children, alert }: { children: React.ReactNode; alert
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-7xl px-4">
           <div className="flex items-center justify-between gap-3 pt-3 sm:pt-4">
-            <Link href="/" className="text-base font-bold sm:text-lg">
-              追客管理
+            {/* 名前が長いぶん、狭い画面では折り返る。行間を詰めておかないと
+                ヘッダーだけが間延びして、下のナビゲーションが押し下げられる */}
+            <Link href="/" className="text-base font-bold leading-tight sm:text-lg">
+              追客管理＆リマインドシステム
             </Link>
             <LogoutButton />
           </div>
