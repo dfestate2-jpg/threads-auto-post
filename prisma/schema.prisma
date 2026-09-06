@@ -122,7 +122,6 @@ model Staff {
   updatedAt     DateTime  @updatedAt
 
   customers    Customer[]
-  boardEntries BoardEntry[]    @relation("BoardAssignee")
   boardTasks   BoardTask[]     @relation("BoardTaskOwner")
   sentMessages Message[]
   users        User[]
@@ -795,17 +794,17 @@ enum BoardEventType {
 }
 
 /// 顧客1人ぶんの追客状態。角度と次回追客日だけを持つ。
+///
+/// **担当者はここに持たない。** 顧客の担当（Customer.assigneeId）ただ1つが正で、
+/// 追客の担当と顧客の担当は常に同じ人になる。
+/// 「常に同じはず」の値を2か所に持つと、いつか必ず食い違う。
 model BoardEntry {
   id         String   @id @default(cuid())
   customerId String   @unique
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   /// 熱意角度 1〜5。null = まだ判断していない（拾い上げの候補）
-  angle      Int?
-  /// 追客の担当者。顧客の担当とは別に持つ（引き継いでも顧客側を書き換えないため）
-  assigneeId String?
-  assignee   Staff?  @relation("BoardAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-
+  angle          Int?
   /// 次回追客の通知時刻。null = 追客しない（角度なし / 角度1 / 終了済み）
   dueAt          DateTime?
   /// 反応がないまま繰り返した回数。間隔を空けるのに使う
@@ -831,7 +830,6 @@ model BoardEntry {
 
   /// Cron が期限到来分を引くための索引
   @@index([dueAt])
-  @@index([assigneeId, dueAt])
   @@index([angle])
   @@index([endedAt])
   @@map("board_entries")

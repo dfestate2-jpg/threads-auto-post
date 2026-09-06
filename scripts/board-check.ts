@@ -278,8 +278,15 @@ async function main(): Promise<void> {
     const entry = await prisma.boardEntry.findUniqueOrThrow({
       where: { customerId: c.id },
       include: {
-        customer: { select: { id: true, name: true, displayName: true, phone: true } },
-        assignee: { select: { id: true, name: true, lineUserId: true, notifyEnabled: true } },
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true,
+            phone: true,
+            assignee: { select: { id: true, name: true, lineUserId: true, notifyEnabled: true } },
+          },
+        },
       },
     })
     await prisma.boardEntry.update({
@@ -320,7 +327,7 @@ async function main(): Promise<void> {
     check('20日後には期限切れになる', parseBoardToken(token, old) === null)
   }
 
-  console.log('\n⑭ リマインドシステムに書き込んでいない')
+  console.log('\n⑭ リマインドのテーブルに書き込んでいない（顧客は担当だけ書く）')
   {
     const convs = await prisma.conversation.count()
     const reminders = await prisma.reminder.count()
@@ -329,28 +336,38 @@ async function main(): Promise<void> {
     check('リマインドを作っていない', reminders === 0, { reminders })
     check('メッセージを作っていない', messages === 0, { messages })
 
-    // 追客側が Customer の追客カラムを触っていないこと
-    const touched = await prisma.customer.count({ where: { nextActionAt: { not: null } } })
-    check('顧客の旧・追客カラムを書き換えていない', touched === 0, { touched })
+    // 顧客に書くのは担当（assigneeId）だけ。旧・追客の列には触らない
+    const touched = await prisma.customer.count({
+      where: { OR: [{ nextActionAt: { not: null } }, { lastContactAt: { not: null } }, { followUpStep: { not: 0 } }] },
+    })
+    check('顧客の旧・追客カラムは書き換えない（担当だけ書く）', touched === 0, { touched })
   }
 
-  console.log('\n⑮ 追客の担当を変えても、顧客そのものの担当は変わらない')
+  console.log('\n⑮ 追客の担当と顧客の担当は同じ人（持ち場所が1つしかない）')
   {
     const other = await prisma.staff.create({ data: { name: '桝谷', active: true } })
     const c = await prisma.customer.create({ data: { name: '引き継ぎ 太郎', assigneeId: staff.id } })
-    await setAngle({ customerId: c.id, angle: 4, staffId: staff.id }, ctx)
-
-    const before = await prisma.boardEntry.findUniqueOrThrow({ where: { customerId: c.id } })
-    check('追客の担当は顧客の担当を引き継いで始まる', before.assigneeId === staff.id)
+    const first = await setAngle({ customerId: c.id, angle: 4, staffId: staff.id }, ctx)
 
     await setBoardAssignee({ customerId: c.id, assigneeId: other.id, staffId: staff.id }, ctx)
 
-    const after = await prisma.boardEntry.findUniqueOrThrow({ where: { customerId: c.id } })
-    check('追客の担当が変わる', after.assigneeId === other.id)
-    check('次回追客日はずれない（引き継ぎで追客が後ろへ流れない）', after.dueAt?.getTime() === before.dueAt?.getTime())
-
     const customer = await prisma.customer.findUniqueOrThrow({ where: { id: c.id } })
-    check('**顧客そのものの担当は変わらない**（リマインドの通知先を壊さない）', customer.assigneeId === staff.id)
+    check('顧客の担当が変わる', customer.assigneeId === other.id)
+
+    const after = await prisma.boardEntry.findUniqueOrThrow({ where: { customerId: c.id } })
+    check('次回追客日はずれない（引き継ぎで追客が後ろへ流れない）', after.dueAt?.getTime() === first.dueAt?.getTime())
+
+    // 追客側に担当の列が無いこと自体が、食い違いようがない証拠になる
+    check('追客側は担当を持たない（食い違いようがない）', !('assigneeId' in after))
+
+    // ヒアリングシートで担当を選んでも、同じ1か所に入る
+    const c2 = await prisma.customer.create({ data: { name: 'シート 花子' } })
+    await addCallMemo(
+      { customerId: c2.id, calledOn: ctx.now, staffId: other.id, angle: 3, createdById: null },
+      ctx,
+    )
+    const c2after = await prisma.customer.findUniqueOrThrow({ where: { id: c2.id } })
+    check('シートで選んだ担当が顧客の担当になる', c2after.assigneeId === other.id)
   }
 
   console.log('\n⑯ 顧客と関係のない自分のタスク')

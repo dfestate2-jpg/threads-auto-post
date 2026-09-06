@@ -44,7 +44,7 @@ function whereFor(view: string | undefined, staff: string | undefined, q: string
   }
 
   if (staff && staff !== 'all') {
-    scope.push(staff === 'none' ? { boardEntry: { assigneeId: null } } : { boardEntry: { assigneeId: staff } })
+    scope.push({ assigneeId: staff === 'none' ? null : staff })
   }
   if (q) {
     scope.push({
@@ -79,7 +79,8 @@ export default async function BoardListPage({
       prisma.customer.findMany({
         where,
         include: {
-          boardEntry: { include: { assignee: { select: { id: true, name: true } } } },
+          boardEntry: true,
+          assignee: { select: { id: true, name: true } },
         },
         // 期限が近い人が上。まだ角度の無い人は最後に回す
         orderBy: [{ boardEntry: { dueAt: { sort: 'asc', nulls: 'last' } } }, { createdAt: 'desc' }],
@@ -199,7 +200,7 @@ export default async function BoardListPage({
                       <BoardAssigneeSelect
                         customerId={c.id}
                         customerName={name}
-                        value={e?.assigneeId ?? null}
+                        value={c.assigneeId}
                         staff={staffOptions}
                       />
                     </td>

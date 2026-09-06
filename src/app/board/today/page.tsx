@@ -50,11 +50,19 @@ export default async function BoardTodayPage({
         where: {
           endedAt: null,
           dueAt: { not: null, lt: endOfToday },
-          ...(scope === 'all' ? {} : { assigneeId: scope === 'none' ? null : scope }),
+          // 担当は顧客側にしか持たない。追客の担当＝顧客の担当
+          ...(scope === 'all' ? {} : { customer: { assigneeId: scope === 'none' ? null : scope } }),
         },
         include: {
-          customer: { select: { id: true, name: true, displayName: true, phone: true } },
-          assignee: { select: { id: true, name: true } },
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              displayName: true,
+              phone: true,
+              assignee: { select: { id: true, name: true } },
+            },
+          },
         },
         orderBy: [{ dueAt: 'asc' }, { angle: 'desc' }],
         take: 200,
@@ -161,7 +169,9 @@ export default async function BoardTodayPage({
                       <Link href={`/customers/${r.customer.id}`} className="text-base font-bold hover:underline">
                         {name}
                       </Link>
-                      {r.assignee ? <span className="text-xs text-slate-500">{r.assignee.name}</span> : null}
+                      {r.customer.assignee ? (
+                        <span className="text-xs text-slate-500">{r.customer.assignee.name}</span>
+                      ) : null}
                     </div>
                     <p className={`text-xs ${over > 0 ? 'font-bold text-red-700' : 'text-slate-500'}`}>
                       {over > 0

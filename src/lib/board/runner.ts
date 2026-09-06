@@ -19,8 +19,10 @@ import { DEFAULT_MESSAGE_TEMPLATE, renderTemplate, type BoardContext } from './s
 import { buildBoardToken } from './token'
 
 type DueEntry = BoardEntry & {
-  customer: Pick<Customer, 'id' | 'name' | 'displayName' | 'phone'>
-  assignee: Pick<Staff, 'id' | 'name' | 'lineUserId' | 'notifyEnabled'> | null
+  // 担当者は顧客側にしか持たない。追客の担当＝顧客の担当
+  customer: Pick<Customer, 'id' | 'name' | 'displayName' | 'phone'> & {
+    assignee: Pick<Staff, 'id' | 'name' | 'lineUserId' | 'notifyEnabled'> | null
+  }
 }
 
 export interface BoardRunResult {
@@ -111,8 +113,15 @@ async function findDue(ctx: BoardContext): Promise<DueEntry[]> {
       OR: [{ notifiedOn: null }, { notifiedOn: { not: today } }],
     },
     include: {
-      customer: { select: { id: true, name: true, displayName: true, phone: true } },
-      assignee: { select: { id: true, name: true, lineUserId: true, notifyEnabled: true } },
+      customer: {
+        select: {
+          id: true,
+          name: true,
+          displayName: true,
+          phone: true,
+          assignee: { select: { id: true, name: true, lineUserId: true, notifyEnabled: true } },
+        },
+      },
     },
     orderBy: [{ dueAt: 'asc' }, { angle: 'desc' }],
     // 1回の実行で無制限に送らない。取りこぼしは次の実行で拾う
@@ -138,13 +147,14 @@ export async function runBoardJob(ctx: BoardContext): Promise<BoardRunResult> {
   for (const entry of entries) {
     const targets: string[] = []
 
-    if (ctx.settings.notifyToStaff && entry.assignee?.lineUserId && entry.assignee.notifyEnabled) {
-      const key = entry.assignee.id
+    const assignee = entry.customer.assignee
+    if (ctx.settings.notifyToStaff && assignee?.lineUserId && assignee.notifyEnabled) {
+      const key = assignee.id
       const used = perStaff.get(key) ?? 0
       // 1人に大量に飛ばすと、通知そのものが読まれなくなる。
       // 上限を超えた分は今日やることで拾ってもらう
       if (used < ctx.settings.dailyLimit) {
-        targets.push(entry.assignee.lineUserId)
+        targets.push(assignee.lineUserId)
         perStaff.set(key, used + 1)
       }
     }
