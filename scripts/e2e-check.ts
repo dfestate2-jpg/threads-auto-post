@@ -15,10 +15,11 @@ import { ChannelPurpose, ChannelType, PrismaClient, ReplyState, ResolvedVia } fr
 
 import { DEFAULT_BUSINESS_HOURS } from '../src/lib/domain/businessHours'
 import { loadPolicyContext } from '../src/lib/services/context'
+import { loadFollowUpContext } from '../src/lib/services/followUp'
 import { recordInboundMessage, recordOutboundMessage } from '../src/lib/services/conversation'
 import { runReminderJob } from '../src/lib/services/reminderRunner'
 import { applyQuickAction } from '../src/lib/services/quickAction'
-import { buildResolveActionData } from '../src/lib/line/quickAction'
+import { buildAssignActionData, buildResolveActionData } from '../src/lib/line/quickAction'
 
 // このスクリプトは DATABASE_URL だけで動くようにする。
 // ボタンの署名鍵は本番と同じ経路（env.quickActionSecret）で参照されるため、未設定なら検証用の値を入れる。
@@ -76,12 +77,16 @@ async function reset(): Promise<void> {
       defaultReminderIntervalMinutes: 60,
       firstReminderDelayMinutes: 60,
       maxSilenceGuardMinutes: 180,
+      // 以降のシナリオは「1時間ごと」を前提に時刻を組んである。
+      // バックオフは ⑰ で独立して検証する
+      reminderBackoffEnabled: false,
     },
     update: {
       respectBusinessHours: false,
       defaultReminderIntervalMinutes: 60,
       firstReminderDelayMinutes: 60,
       maxSilenceGuardMinutes: 180,
+      reminderBackoffEnabled: false,
       businessHours: DEFAULT_BUSINESS_HOURS as object,
     },
   })
@@ -126,8 +131,10 @@ async function main(): Promise<void> {
 
     s = await runReminderJob(new Date(T0.getTime() + 60 * MIN))
     check('60分時点で1通送られる', s.sent === 1, s)
-    check('通知本文が依頼書式になっている', received[0]?.includes('公式LINE未返信リマインド') === true)
-    check('未返信時間が表示される', received[0]?.includes('未返信時間：1時間') === true, received[0])
+    check('通知本文が経過時間から始まる', received[0]?.includes('⚠️ 未返信 1時間') === true, received[0])
+    check('通知本文に顧客と担当者が並ぶ', received[0]?.includes('（担当：') === true)
+    check('通知本文に操作の案内がある', received[0]?.includes('返信したら下のボタンをタップしてください。') === true)
+    check('顧客名と本文が載る', received[0]?.includes('『〇〇について聞きたいです』') === true, received[0])
 
     s = await runReminderJob(new Date(T0.getTime() + 120 * MIN))
     check('120分時点で2通目が送られる', s.sent === 1 && received.length === 2, { s, count: received.length })
@@ -153,6 +160,7 @@ async function main(): Promise<void> {
     const out = await recordOutboundMessage(
       { customerId: customer.id, text: 'ご連絡ありがとうございます', sentAt: T_reply, source: 'ADMIN_CONSOLE', via: ResolvedVia.ADMIN_REPLY },
       await loadPolicyContext(T_reply),
+      await loadFollowUpContext(T_reply),
     )
     check('未返信状態が解消される', out.stillAwaiting === false)
     check('次回リマインドが取り消される', out.nextReminderAt === null)
@@ -200,9 +208,10 @@ async function main(): Promise<void> {
     check('連投中でも通知が出る', guardSent > 0, { guardSent })
     const guardReminder = await prisma.reminder.findFirst({ where: { kind: 'GUARD' } })
     check('保険（GUARD）として記録される', guardReminder !== null)
+    // 連投中は最新メッセージ基準だと数字が小さくなり軽く見える。実際の放置時間を出す
     check(
-      '最初の未返信からの実経過が併記される',
-      received.some((r) => r.includes('最初の未返信から')),
+      '連投中でも実際の放置時間が出る',
+      received.some((r) => r.includes('未返信 3時間（メッセージ連投中）')),
       received[0],
     )
 
@@ -517,6 +526,244 @@ async function main(): Promise<void> {
     check(
       '対応済み後はリマインドが止まる',
       (await prisma.conversation.findUniqueOrThrow({ where: { id: shared.conversationId } })).nextReminderAt === null,
+    )
+
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑮ 社内LINE通知の「自分が担当にする」ボタン')
+    await reset()
+    await prisma.appSettings.update({ where: { id: 1 }, data: { respectBusinessHours: false } })
+    await prisma.notificationChannel.create({
+      data: { name: '社内LINEグループ', type: ChannelType.LINE_GROUP, target: 'Ginternal', purpose: ChannelPurpose.DEFAULT_GROUP },
+    })
+    const assigner = await prisma.staff.create({
+      data: { name: '割当担当', email: 'assign@example.test', lineUserId: 'Ustaff-assign' },
+    })
+    const qsecret = process.env.QUICK_ACTION_SECRET ?? process.env.SESSION_SECRET!
+
+    await inbound('Ucustomer13', '担当割当の確認です', T0, 'msg-13a')
+    const conv13 = await prisma.conversation.findFirstOrThrow({ where: { customer: { lineUserId: 'Ucustomer13' } } })
+    const assignData = buildAssignActionData(
+      { customerId: conv13.customerId, cycleId: conv13.firstUnrepliedAt!.getTime() },
+      qsecret,
+    )!
+
+    check(
+      '割当前は担当者が未設定',
+      (await prisma.customer.findUniqueOrThrow({ where: { id: conv13.customerId } })).assigneeId === null,
+    )
+
+    // 社内グループから、担当者として登録済みの人がタップする
+    const assigned = await applyQuickAction(
+      { data: assignData, source: { type: 'group', groupId: 'Ginternal', userId: 'Ustaff-assign' } },
+      await loadPolicyContext(T0),
+    )
+    check('グループからのタップで担当者になる', assigned.status === 'ASSIGNED', assigned)
+    check(
+      '顧客の担当者が更新される',
+      (await prisma.customer.findUniqueOrThrow({ where: { id: conv13.customerId } })).assigneeId === assigner.id,
+    )
+
+    // 担当を引き受けただけで、未返信を閉じてはいけない（見逃しに直結する）
+    const conv13b = await prisma.conversation.findUniqueOrThrow({ where: { id: conv13.id } })
+    check('担当割当では未返信のままになる', conv13b.replyState === ReplyState.AWAITING, conv13b.replyState)
+    check('リマインド予定も消えない', conv13b.nextReminderAt !== null, conv13b.nextReminderAt)
+
+    // 未登録アカウントが押しても、誰に割り当てるか決められない
+    const notStaff = await applyQuickAction(
+      { data: assignData, source: { type: 'group', groupId: 'Ginternal', userId: 'Uunknown-person' } },
+      await loadPolicyContext(T0),
+    )
+    check('未登録アカウントのタップは担当者にできない', notStaff.status === 'NOT_STAFF', notStaff.status)
+    check(
+      '担当者は元のまま変わらない',
+      (await prisma.customer.findUniqueOrThrow({ where: { id: conv13.customerId } })).assigneeId === assigner.id,
+    )
+
+    // 社外からのタップは、そもそも受け付けない
+    const outsiderAssign = await applyQuickAction(
+      { data: assignData, source: { type: 'user', userId: 'Uoutsider-assign' } },
+      await loadPolicyContext(T0),
+    )
+    check('社外アカウントの担当割当は拒否される', outsiderAssign.status === 'FORBIDDEN', outsiderAssign.status)
+
+    // 署名の対象に種別が入っているので、担当割当を「対応済み」に化けさせられない
+    const forgedKind = await applyQuickAction(
+      { data: assignData.replace('.A.', '.R.'), source: { type: 'group', groupId: 'Ginternal', userId: 'Ustaff-assign' } },
+      await loadPolicyContext(T0),
+    )
+    check('種別を差し替えたデータは無視される', forgedKind.status === 'INVALID', forgedKind.status)
+    check(
+      '差し替えられても未返信のまま',
+      (await prisma.conversation.findUniqueOrThrow({ where: { id: conv13.id } })).replyState === ReplyState.AWAITING,
+    )
+
+
+    // ---------------------------------------------------------------------
+    console.log('\n⑯ 2回目以降のリマインドを1通にまとめる')
+    await reset()
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: { respectBusinessHours: false, digestRepeatReminders: true },
+    })
+    await prisma.notificationChannel.create({
+      data: { name: '社内LINEグループ', type: ChannelType.WEBHOOK, target: `http://127.0.0.1:${PORT}/hook`, purpose: ChannelPurpose.DEFAULT_GROUP },
+    })
+
+    for (const n of [1, 2, 3]) {
+      await inbound(`Udigest${n}`, `まとめ確認${n}`, T0, `msg-16-${n}`)
+    }
+
+    received.length = 0
+    const digestFirst = await runReminderJob(new Date(T0.getTime() + 60 * MIN))
+    check('初回は3件が個別に送られる', digestFirst.sent === 3, digestFirst)
+    check('初回の通知は3通', received.length === 3, received.length)
+    check('初回にまとめ通知は出ない', !received.some((r) => r.includes('件（継続中）')), received[0])
+
+    received.length = 0
+    const digestSecond = await runReminderJob(new Date(T0.getTime() + 130 * MIN))
+    check('2回目も3件とも送信済みとして処理される', digestSecond.sent === 3, digestSecond)
+    check('2回目は1通にまとまる', received.length === 1, received.length)
+    check('まとめ通知に3件すべて載る', received[0]?.includes('未返信 3件（継続中）') === true, received[0])
+    for (const n of [1, 2, 3]) {
+      check(`まとめ通知に${n}件目が含まれる`, received[0]?.includes(`Udigest${n}`) === true)
+    }
+
+    // まとめても予定と記録は1件ずつ進む＝取りこぼしが起きない
+    const digestConvs = await prisma.conversation.findMany({
+      where: { customer: { lineUserId: { startsWith: 'Udigest' } } },
+    })
+    check('まとめても回数は1件ずつ進む', digestConvs.every((c) => c.reminderCount === 2), digestConvs.map((c) => c.reminderCount))
+    check('まとめても次回予定が入る', digestConvs.every((c) => c.nextReminderAt !== null))
+    check(
+      'まとめても記録は1件ずつ残る',
+      (await prisma.reminder.count({ where: { conversationId: { in: digestConvs.map((c) => c.id) }, sequence: 2 } })) === 3,
+    )
+
+    // 1件だけ返信すると、次のまとめから外れる
+    await recordOutboundMessage(
+      {
+        customerId: digestConvs[0]!.customerId,
+        text: '返信しました',
+        messageType: 'text',
+        sentAt: new Date(T0.getTime() + 140 * MIN),
+        source: 'ADMIN_UI',
+        via: ResolvedVia.ADMIN_REPLY,
+      },
+      await loadPolicyContext(T0),
+      await loadFollowUpContext(T0),
+    )
+    received.length = 0
+    await runReminderJob(new Date(T0.getTime() + 200 * MIN))
+    check('返信済みはまとめ通知から外れる', received.every((r) => !r.includes(digestConvs[0]!.customerId)), received[0])
+
+    // ---------------------------------------------------------------------
+    /**
+     * バックオフ。LINEの無料通数はライトプランで上限に達すると
+     * **送信そのものができなくなる**（＝リマインドが止まる）ため、
+     * 同じ内容を1時間ごとに鳴らし続けない。
+     *
+     * ここで確かめたいのは「通数が減ること」だけではない。
+     * **見逃しにつながる副作用が出ていないこと**（保険に打ち消されない・
+     * エスカレーションが定刻どおり出る・返信で止まる）まで見る。
+     */
+    console.log('\n⑰ リマインドの間隔を回ごとに広げる（バックオフ）')
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: {
+        reminderBackoffEnabled: true,
+        maxReminderIntervalMinutes: 480,
+        digestRepeatReminders: false,
+        maxSilenceGuardMinutes: 180,
+      },
+    })
+
+    const B0 = new Date('2026-08-24T00:00:00Z')
+    await inbound('Ubackoff1', 'バックオフ検証', B0, 'msg-backoff-1')
+    const bConv = await prisma.conversation.findFirstOrThrow({
+      where: { customer: { lineUserId: 'Ubackoff1' } },
+    })
+
+    // 15分刻みでCronを回す。実運用（cron-job.orgが15分間隔）と同じ刻み
+    for (let m = 15; m <= 15 * 60; m += 15) {
+      await runReminderJob(new Date(B0.getTime() + m * MIN))
+    }
+
+    /**
+     * 通知が出た時刻は **この会話の記録から** 求める。
+     * runReminderJob は全会話を処理するので、送信件数で数えると
+     * 前のシナリオの積み残しを拾ってしまい、何を測っているのか分からなくなる。
+     */
+    const firedAt = (
+      await prisma.reminder.findMany({ where: { conversationId: bConv.id }, orderBy: { scheduledFor: 'asc' } })
+    ).map((r) => Math.round((r.scheduledFor.getTime() - B0.getTime()) / MIN))
+
+    check('初回は60分で出る', firedAt[0] === 60, firedAt)
+    check('2通目は120分（基準どおり）', firedAt[1] === 120, firedAt)
+    check('3通目は240分（間隔が倍）', firedAt[2] === 240, firedAt)
+    check('4通目は480分（さらに倍）', firedAt[3] === 480, firedAt)
+    check('保険（180分）に引き戻されない', !firedAt.includes(300) && !firedAt.includes(420), firedAt)
+    check('15時間で4通に収まる（1時間ごとなら15通）', firedAt.length === 4, { firedAt, count: firedAt.length })
+
+    const bAfter = await prisma.conversation.findUniqueOrThrow({ where: { id: bConv.id } })
+    check('未返信のままで、通知は止まっていない', bAfter.replyState === 'AWAITING', bAfter.replyState)
+    check('次回予定が入り続けている', bAfter.nextReminderAt !== null)
+
+    /**
+     * 段階が上がる通知まで薄くしてしまうと見逃しになる。
+     * バックオフが薄くしてよいのは「同じ内容の繰り返し」だけで、
+     * エスカレーションは間隔に関係なく定刻どおり出なければならない。
+     */
+    await prisma.escalationRule.createMany({
+      data: [
+        { name: '3時間', thresholdMinutes: 180, notifyAssignee: true, notifyManager: false, notifyAdmins: false, notifyGroup: true, enabled: true },
+        { name: '6時間', thresholdMinutes: 360, notifyAssignee: true, notifyManager: true, notifyAdmins: false, notifyGroup: true, enabled: true },
+      ],
+    })
+    const E0 = new Date('2026-08-25T00:00:00Z')
+    await inbound('Ubackoff2', 'エスカレーション併用', E0, 'msg-backoff-2')
+    const eConv = await prisma.conversation.findFirstOrThrow({ where: { customer: { lineUserId: 'Ubackoff2' } } })
+    for (let m = 15; m <= 7 * 60; m += 15) {
+      await runReminderJob(new Date(E0.getTime() + m * MIN))
+    }
+    const eReminders = await prisma.reminder.findMany({
+      where: { conversationId: eConv.id },
+      orderBy: { scheduledFor: 'asc' },
+    })
+    const escalated = eReminders.filter((r) => r.kind === 'ESCALATION').map((r) => r.unrepliedMinutes)
+    check('3時間のエスカレーションが定刻で出る', escalated.includes(180), escalated)
+    check('6時間のエスカレーションが定刻で出る', escalated.includes(360), escalated)
+
+    // 返信すればバックオフ中でも即座に止まる
+    const bReply = await recordOutboundMessage(
+      {
+        customerId: bConv.customerId,
+        text: '返信しました',
+        messageType: 'text',
+        sentAt: new Date(B0.getTime() + 16 * 60 * MIN),
+        source: 'ADMIN_UI',
+        via: ResolvedVia.ADMIN_REPLY,
+      },
+      await loadPolicyContext(B0),
+      await loadFollowUpContext(B0),
+    )
+    check('返信で未返信が解消される', bReply.stillAwaiting === false)
+    check('返信で次回予定が消える', bReply.nextReminderAt === null)
+
+    received.length = 0
+    const afterReplyRun = await runReminderJob(new Date(B0.getTime() + 20 * 60 * MIN))
+    check('返信後は送られない', afterReplyRun.sent === 0, afterReplyRun)
+
+    // ---------------------------------------------------------------------
+    /** 通数の計上。送信の出口で数えているので、リマインドを送れば必ず記録が残る */
+    console.log('\n⑱ LINEの消費通数を実測する')
+    const usageRows = await prisma.messageUsage.findMany()
+    check('送信のたびに通数が記録される', usageRows.length > 0, usageRows.length)
+    check('リマインドとして分類される', usageRows.some((r) => r.purpose === 'REMINDER'))
+    check(
+      'グループ宛ては人数分で数える',
+      usageRows.filter((r) => r.channel === 'LINE_GROUP').every((r) => r.units >= 1),
+      usageRows.filter((r) => r.channel === 'LINE_GROUP').map((r) => r.units),
     )
 
   } finally {

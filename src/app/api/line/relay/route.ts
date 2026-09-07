@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server'
 
 import { authenticateRelay, readPresentedToken } from '@/lib/line/relayAuth'
+import { fanoutLineRelay } from '@/lib/line/relayFanout'
 import { describeShape, extractLineEvents } from '@/lib/line/relayPayload'
 import { env } from '@/lib/env'
 import { loadPolicyContext } from '@/lib/services/context'
 import { processLineEvents, type ChannelKind } from '@/lib/services/lineWebhook'
+import { recordRelayReceipt } from '@/lib/services/relayReceipt'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -28,13 +30,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     rawBody,
     signature: request.headers.get('x-line-signature'),
     presentedToken: readPresentedToken(request),
-    channelSecret: env.lineChannelSecret,
+    channelSecret: env.optionalLineChannelSecret,
     notifyChannelSecret: env.lineNotifyChannelSecret,
     expectedToken: env.lstepRelayToken,
   })
 
   if (!auth.ok) {
     console.warn('[line-relay] 受理しませんでした', { reason: auth.reason })
+    await recordRelayReceipt({ endpoint: 'RELAY', accepted: false, detail: auth.reason })
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
@@ -52,26 +55,38 @@ export async function POST(request: Request): Promise<NextResponse> {
    * それが最悪なので、0件のときは必ず「何が届いたか」を形だけログに残す（値は出さない）。
    * 導入直後のテスト送信では LSTEP_RELAY_DEBUG=1 にして、成功時も形を確認する。
    */
+  const shape = describeShape(body)
+
   if (events.length === 0) {
-    console.warn('[line-relay] イベントを取り出せませんでした', {
-      via: auth.via,
-      shape: describeShape(body),
-    })
+    console.warn('[line-relay] イベントを取り出せませんでした', { via: auth.via, shape })
+    await recordRelayReceipt({ endpoint: 'RELAY', accepted: true, detail: auth.via, eventCount: 0, shape })
     // 転送元に再送させても形は変わらないので 200 を返す
     return NextResponse.json({ ok: true, accepted: 0 })
   }
+
+  await recordRelayReceipt({
+    endpoint: 'RELAY',
+    accepted: true,
+    detail: auth.via,
+    eventCount: events.length,
+    shape,
+  })
 
   if (env.lstepRelayDebug) {
     console.info('[line-relay] 受信', {
       via: auth.via,
       hasSignature: request.headers.get('x-line-signature') !== null,
-      shape: describeShape(body),
+      shape,
       eventTypes: events.map((e) => e.type),
     })
   }
 
   const channel: ChannelKind = auth.via === 'LINE_SIGNATURE' ? auth.channel : 'MAIN'
   await processLineEvents(events, channel, await loadPolicyContext())
+
+  // 本来の処理が終わってから、もう1か所へそのまま流す。
+  // ここで何が起きても未返信の検知には影響しない（3秒で打ち切り、失敗しても投げない）
+  await fanoutLineRelay(rawBody, request.headers.get('x-line-signature'), env.relayFanoutUrl)
 
   return NextResponse.json({ ok: true, accepted: events.length })
 }

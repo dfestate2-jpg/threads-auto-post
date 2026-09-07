@@ -60,6 +60,8 @@ LINE Messaging API の Webhook は **顧客→公式アカウント方向のイ�
 ```
 LINE_CHANNEL_SECRET            # チャネル①のチャネルシークレット（署名検証用）
 LINE_CHANNEL_ACCESS_TOKEN      # チャネル①の長期アクセストークン（顧客への返信用）
+LINE_CHANNEL_ID                # 任意。アクセストークンを取り出せない場合に、
+                               # シークレットと組で使い捨てトークンを発行して顧客名を取得する
 LINE_NOTIFY_CHANNEL_ACCESS_TOKEN # チャネル②の長期アクセストークン（社内通知用）
 INTERNAL_SLACK_WEBHOOK_URL     # 社内Slackの Incoming Webhook URL（担当者未設定時の通知先）
 INTERNAL_LINE_GROUP_ID         # (代替) 社内LINEグループのID。Slack運用なら不要

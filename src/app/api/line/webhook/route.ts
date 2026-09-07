@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
 
-import { verifyLineSignature } from '@/lib/line/signature'
+import { resolveChannelBySignature } from '@/lib/line/signature'
 import type { LineWebhookBody } from '@/lib/line/types'
 import { env } from '@/lib/env'
 import { loadPolicyContext } from '@/lib/services/context'
 import { processLineEvents, type ChannelKind } from '@/lib/services/lineWebhook'
+import { recordRelayReceipt } from '@/lib/services/relayReceipt'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -19,16 +20,26 @@ export async function POST(request: Request): Promise<NextResponse> {
    * そちらのチャネル署名で届く。どちらか一方でも検証できれば受理し、
    * 応答（reply）には検証できたチャネルのトークンを使う。
    */
-  let channel: ChannelKind
-  if (verifyLineSignature(rawBody, signature, env.lineChannelSecret)) {
-    channel = 'MAIN'
-  } else if (
-    env.lineNotifyChannelSecret &&
-    verifyLineSignature(rawBody, signature, env.lineNotifyChannelSecret)
-  ) {
-    channel = 'NOTIFY'
-  } else {
+  const mainSecret = env.optionalLineChannelSecret
+  const notifySecret = env.lineNotifyChannelSecret
+
+  /**
+   * 鍵が1つも無ければ検証しようがない。**通してはいけない**ので 401 で落とすが、
+   * 設定漏れと偽装を切り分けられるようログには理由を書き分ける。
+   */
+  if (!mainSecret && !notifySecret) {
+    console.error('[line-webhook] LINE_CHANNEL_SECRET / LINE_NOTIFY_CHANNEL_SECRET がどちらも未設定です')
+    await recordRelayReceipt({ endpoint: 'WEBHOOK', accepted: false, detail: 'NO_CHANNEL_SECRET' })
+    return NextResponse.json({ error: 'invalid signature' }, { status: 401 })
+  }
+
+  const channel: ChannelKind | null = resolveChannelBySignature(rawBody, signature, {
+    main: mainSecret,
+    notify: notifySecret,
+  })
+  if (!channel) {
     console.warn('[line-webhook] signature verification failed')
+    await recordRelayReceipt({ endpoint: 'WEBHOOK', accepted: false, detail: 'BAD_SIGNATURE' })
     return NextResponse.json({ error: 'invalid signature' }, { status: 401 })
   }
 
@@ -40,6 +51,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const events = Array.isArray(body.events) ? body.events : []
+  await recordRelayReceipt({
+    endpoint: 'WEBHOOK',
+    accepted: true,
+    detail: channel,
+    eventCount: events.length,
+  })
   if (events.length === 0) return NextResponse.json({ ok: true }) // LINE の疎通確認
 
   await processLineEvents(events, channel, await loadPolicyContext())

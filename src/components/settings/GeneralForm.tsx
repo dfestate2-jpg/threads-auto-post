@@ -3,6 +3,12 @@
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
+import {
+  DEFAULT_NOTIFICATION_TEMPLATE,
+  TEMPLATE_PLACEHOLDERS,
+  renderNotificationTemplate,
+} from '@/lib/domain/notificationText'
+
 const DAYS = [
   { key: 'mon', label: '月' },
   { key: 'tue', label: '火' },
@@ -26,17 +32,43 @@ export interface GeneralSettings {
   openOnPublicHolidays: boolean
   countBusinessHoursOnly: boolean
   maxSilenceGuardMinutes: number
+  reminderBackoffEnabled: boolean
+  maxReminderIntervalMinutes: number
+  lineMonthlyFreeQuota: number
   watchdogDelayMinutes: number
   alwaysNotifyDefaultGroup: boolean
+  digestRepeatReminders: boolean
   includeMessageBodyInNotification: boolean
   messageExcerptLength: number
+  notificationTemplate: string | null
 }
 
-export function GeneralForm({ initial }: { initial: GeneralSettings }) {
+/**
+ * 編集中の文面がどう届くかを、その場で見せるための見本。
+ *
+ * URLだけは実際の公開URL（APP_BASE_URL）から組み立てる。
+ * 見本にURLを直接書いておくと、独自ドメインに変えたときに
+ * 見本だけ古いURLのままになり、設定画面が嘘をつくことになる。
+ * 組み立て方は services/reminderRunner の detailUrl と揃えてある。
+ */
+function previewValues(appBaseUrl: string): Record<string, string> {
+  return {
+    '{印}': '⚠️',
+    '{経過時間}': '1時間20分',
+    '{補足}': '',
+    '{顧客名}': '山田太郎',
+    '{担当者}': '内田翔太',
+    '{メッセージ}': '内見の件ですが、来週の土曜日は空いていますでしょうか？',
+    '{URL}': appBaseUrl ? `${appBaseUrl.replace(/\/$/, '')}/customers/abc123` : '',
+  }
+}
+
+export function GeneralForm({ initial, appBaseUrl }: { initial: GeneralSettings; appBaseUrl: string }) {
   const router = useRouter()
   const [s, setS] = useState<GeneralSettings>(initial)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const preview = previewValues(appBaseUrl)
 
   function setDay(day: DayKey, patch: Partial<DayHours>) {
     setS((prev) => ({
@@ -126,6 +158,36 @@ export function GeneralForm({ initial }: { initial: GeneralSettings }) {
         </div>
 
         <div>
+          <label className="label">間隔を広げる上限（分）</label>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={10080}
+            value={s.maxReminderIntervalMinutes}
+            onChange={(e) => setS({ ...s, maxReminderIntervalMinutes: Number(e.target.value) })}
+          />
+          <p className="hint">
+            下の「間隔を広げていく」がONのとき、ここまで間隔を広げます。480 = 8時間。0 で上限なし。
+          </p>
+        </div>
+
+        <div>
+          <label className="label">LINEの月間無料メッセージ通数</label>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={1000000}
+            value={s.lineMonthlyFreeQuota}
+            onChange={(e) => setS({ ...s, lineMonthlyFreeQuota: Number(e.target.value) })}
+          />
+          <p className="hint">
+            ダッシュボードの残量表示に使う値です。ライトプラン = 5,000。送信自体を止めることはありません。
+          </p>
+        </div>
+
+        <div>
           <label className="label">通知に載せるメッセージの文字数</label>
           <input
             className="input"
@@ -145,6 +207,14 @@ export function GeneralForm({ initial }: { initial: GeneralSettings }) {
             ['countBusinessHoursOnly', '未返信の経過時間を営業時間だけで数える'],
             ['openOnPublicHolidays', '祝日も営業する'],
             ['alwaysNotifyDefaultGroup', '担当者が決まっていても、社内共通の通知先へ同報する（事務など担当者以外も返信する場合）'],
+            [
+              'digestRepeatReminders',
+              '2回目以降のリマインドを1通にまとめる（初回とエスカレーションはボタン付きの個別通知のまま）',
+            ],
+            [
+              'reminderBackoffEnabled',
+              'リマインドの間隔を回を追うごとに広げる（1時間→2時間→4時間→8時間）。エスカレーションは定刻どおり発火します',
+            ],
             ['includeMessageBodyInNotification', '通知に顧客メッセージの本文を含める'],
           ] as const
         ).map(([key, label]) => (
@@ -153,6 +223,54 @@ export function GeneralForm({ initial }: { initial: GeneralSettings }) {
             {label}
           </label>
         ))}
+      </div>
+
+      <div className="mt-6 border-t border-slate-100 pt-4">
+        <h3 className="mb-1 text-sm font-bold">リマインドの文面</h3>
+        <p className="mb-2 text-xs text-slate-500">
+          社内LINEに届くリマインドの本文です。空にすると既定の文面に戻ります。
+          ボタン（対応済み・自分が担当）は文面に関係なく常に付きます。
+        </p>
+        <textarea
+          className="input font-mono"
+          rows={7}
+          value={s.notificationTemplate ?? DEFAULT_NOTIFICATION_TEMPLATE}
+          onChange={(e) => setS({ ...s, notificationTemplate: e.target.value })}
+        />
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+          {TEMPLATE_PLACEHOLDERS.map((p) => (
+            <span key={p.key}>
+              <code className="rounded bg-slate-100 px-1 font-mono text-slate-700">{p.key}</code> {p.description}
+            </span>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="btn-secondary mt-2"
+          onClick={() => setS({ ...s, notificationTemplate: DEFAULT_NOTIFICATION_TEMPLATE })}
+        >
+          既定の文面に戻す
+        </button>
+
+        <div className="mt-3">
+          <div className="mb-1 text-xs font-medium text-slate-600">届く見本</div>
+          {!appBaseUrl ? (
+            <p className="mb-1 text-xs text-orange-700">
+              サイトのURL（APP_BASE_URL）が未設定のため、通知に管理画面へのリンクが載りません。
+            </p>
+          ) : null}
+          <pre className="whitespace-pre-wrap rounded-lg bg-slate-900 p-3 text-xs leading-relaxed text-slate-100">
+            {renderNotificationTemplate(
+              (s.notificationTemplate ?? '').trim() || DEFAULT_NOTIFICATION_TEMPLATE,
+              {
+                ...preview,
+                '{メッセージ}': s.includeMessageBodyInNotification
+                  ? preview['{メッセージ}']!.slice(0, s.messageExcerptLength)
+                  : '',
+              },
+            )}
+          </pre>
+        </div>
       </div>
 
       <div className="mt-6 border-t border-slate-100 pt-4">

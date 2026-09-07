@@ -198,6 +198,7 @@ postgresql://postgres:あなたのパスワード@db.xxxx.supabase.co:5432/postg
 | `DIRECT_URL` | 手順02の接続文字列（**Session pooler / 5432**） |
 | `LINE_CHANNEL_SECRET` | 顧客対応チャネルのチャネルシークレット |
 | `LINE_CHANNEL_ACCESS_TOKEN` | 顧客対応チャネルのアクセストークン |
+| `LINE_CHANNEL_ID` | 任意。上のトークンが手に入らない場合に設定すると顧客名を取得できる |
 | `LINE_NOTIFY_CHANNEL_ACCESS_TOKEN` | 社内通知チャネルのアクセストークン |
 | `LINE_NOTIFY_CHANNEL_SECRET` | 社内通知チャネルのチャネルシークレット |
 | `LSTEP_RELAY_TOKEN` | 自分で作った文字列（Lステップの転送先URLに載せる） |

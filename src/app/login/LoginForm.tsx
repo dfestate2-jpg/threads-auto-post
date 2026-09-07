@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
-export function LoginForm() {
+export function LoginForm({ next = '/' }: { next?: string }) {
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -25,7 +25,7 @@ export function LoginForm() {
         setError(data.error ?? 'ログインに失敗しました')
         return
       }
-      router.replace('/')
+      router.replace(next)
       router.refresh()
     } finally {
       setBusy(false)

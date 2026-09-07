@@ -7,8 +7,23 @@ import { LoginForm } from './LoginForm'
 
 export const dynamic = 'force-dynamic'
 
-export default async function LoginPage() {
-  if (await readSession()) redirect('/')
+/**
+ * ログイン後の戻り先。
+ * middleware が付ける ?next= をそのまま信じると外部サイトへ飛ばせてしまうため、
+ * 「このサイト内のパス」だけを許可する。
+ */
+function safeNext(raw: string | undefined): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/'
+  return raw
+}
+
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>
+}) {
+  const next = safeNext((await searchParams).next)
+  if (await readSession()) redirect(next)
 
   // 管理者が1人もいない = 初回。ログイン画面で迷わせず初期設定へ送る。
   // redirect() は内部で例外を投げるため、**必ず try の外で呼ぶ**
@@ -26,7 +41,7 @@ export default async function LoginPage() {
       <div className="card w-full max-w-sm p-6">
         <h1 className="mb-1 text-lg font-bold">公式LINE 未返信リマインド</h1>
         <p className="mb-6 text-sm text-slate-500">管理画面にログイン</p>
-        <LoginForm />
+        <LoginForm next={next} />
       </div>
     </main>
   )

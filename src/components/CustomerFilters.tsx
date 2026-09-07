@@ -10,7 +10,13 @@ const STATUSES = [
   { value: 'NEEDS_CHECK', label: '要確認' },
 ]
 
-export function CustomerFilters({ staff }: { staff: { id: string; name: string }[] }) {
+export function CustomerFilters({
+  staff,
+  basePath = '/customers',
+}: {
+  staff: { id: string; name: string }[]
+  basePath?: string
+}) {
   const router = useRouter()
   const params = useSearchParams()
 
@@ -19,7 +25,7 @@ export function CustomerFilters({ staff }: { staff: { id: string; name: string }
     if (value) sp.set(key, value)
     else sp.delete(key)
     sp.delete('page')
-    router.push(`/customers?${sp.toString()}`)
+    router.push(`${basePath}?${sp.toString()}`)
   }
 
   return (
