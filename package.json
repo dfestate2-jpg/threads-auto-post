@@ -25,7 +25,8 @@
     "followups:run": "tsx scripts/run-followups.ts",
     "check:followup": "tsx scripts/followup-check.ts",
     "check:reminder": "tsx scripts/e2e-check.ts",
-    "check:stats": "tsx scripts/stats-check.ts"
+    "check:stats": "tsx scripts/stats-check.ts",
+    "check:board": "tsx scripts/board-check.ts"
   },
   "dependencies": {
     "@prisma/client": "6.2.1",

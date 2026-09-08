@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 
+import { THEME_INIT_SCRIPT } from '@/lib/theme'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -10,7 +11,13 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ja">
+    // 明るさの印は描画前のスクリプトが付ける。サーバー側の出力とは
+    // 必ず食い違うので、その1か所だけ警告を止める
+    <html lang="ja" suppressHydrationWarning>
+      <head>
+        {/* 中身は自分で書いた定数のみ。外から来た文字列は入らない */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body>{children}</body>
     </html>
   )

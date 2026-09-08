@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { NAV_GROUPS, NAV_ROOT, isActive } from '@/lib/company-os/nav'
 import { api } from './api'
 
@@ -74,6 +75,7 @@ export function CompanyOsShell({
               <span className="block text-xs font-medium text-slate-800">{user.name}</span>
               <span className="block text-[11px] text-slate-500">{user.roleLabel}</span>
             </span>
+            <ThemeToggle />
             <Link
               href="/portal"
               className="whitespace-nowrap rounded-lg px-2 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900"
