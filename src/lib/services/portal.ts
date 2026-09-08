@@ -167,6 +167,16 @@ export async function seedDefaultSystems(db: Db = prisma): Promise<number> {
       published: true,
       sortOrder: 10,
     },
+    {
+      name: 'Company OS',
+      description: '会社の立ち上げから経営までを一元管理',
+      icon: '🏢',
+      accent: 'indigo',
+      url: '/company-os',
+      openInNewTab: false,
+      published: true,
+      sortOrder: 20,
+    },
   ]
   for (const d of defaults) {
     const { sortOrder, ...rest } = d

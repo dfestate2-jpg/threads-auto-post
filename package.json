@@ -21,6 +21,7 @@
     "seed": "tsx prisma/seed.ts",
     "postinstall": "prisma generate",
     "seed:demo": "tsx scripts/demo-seed.ts",
+    "seed:company-os": "tsx scripts/company-os-demo.ts",
     "followups:run": "tsx scripts/run-followups.ts",
     "check:followup": "tsx scripts/followup-check.ts",
     "check:reminder": "tsx scripts/e2e-check.ts",

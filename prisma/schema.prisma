@@ -756,3 +756,595 @@ model PortalSystem {
   @@index([published, sortOrder])
   @@map("portal_systems")
 }
+
+// ===========================================================================
+//  Company OS — 会社の立ち上げから経営までを一元管理する
+//
+//  既存の追客システムとは同じデータベースを共有するが、テーブルは co_ 接頭辞で
+//  完全に分けている。相互参照は行っていないため、片方だけを止めても壊れない。
+//  設計意図の詳細は docs/14-company-os.md を参照。
+// ===========================================================================
+
+/// 会社内での権限。数値順の強さはコード側（lib/company-os/access.ts）で持つ
+enum CoRole {
+  OWNER /// 経営者。すべてを見て、すべてを決められる
+  ADMIN /// 管理者。設定変更まで可能
+  MANAGER /// 責任者。担当領域の実務を回す
+  MEMBER /// 一般メンバー
+  VIEWER /// 閲覧のみ
+}
+
+/// 会社の段階。ダッシュボードで「次に何をすべきか」を変えるために使う
+enum CoStage {
+  IDEA /// 構想中
+  PREPARING /// 設立準備中
+  ESTABLISHED /// 設立済み
+  GROWING /// 成長期
+  ACQUIRED /// 買収した会社
+}
+
+enum CoTaskStatus {
+  TODO /// 未着手
+  IN_PROGRESS /// 進行中
+  REVIEW /// 確認待ち
+  DONE /// 完了
+  ON_HOLD /// 保留
+  CANCELED /// 中止
+}
+
+enum CoPriority {
+  TOP /// 最優先
+  HIGH /// 高
+  MEDIUM /// 中
+  LOW /// 低
+}
+
+/// タスク・課題・書類を横断で束ねる領域。サイドバーの大分類と対応する
+enum CoArea {
+  COMPANY /// 会社設立
+  LEGAL /// 法務
+  MANAGEMENT /// 経営
+  BUSINESS /// 事業・商品
+  SALES /// 営業
+  CUSTOMER /// 顧客
+  DEVELOPMENT /// 開発
+  SUBSIDY /// 補助金
+  MA /// M&A
+  FINANCE /// 財務
+  HR /// 人事・組織
+  OTHER /// その他
+}
+
+enum CoProjectStatus {
+  PLANNING /// 計画中
+  ACTIVE /// 進行中
+  ON_HOLD /// 保留
+  DONE /// 完了
+  CANCELED /// 中止
+}
+
+enum CoIssueStatus {
+  OPEN /// 未対応
+  INVESTIGATING /// 調査中
+  ACTING /// 対策中
+  RESOLVED /// 解決
+  ON_HOLD /// 保留
+}
+
+enum CoSeverity {
+  CRITICAL /// 経営に直結する
+  HIGH /// 重要
+  MEDIUM /// 中
+  LOW /// 低
+}
+
+/// 未決事項の状態
+enum CoQuestionStatus {
+  OPEN /// 未着手
+  DISCUSSING /// 検討中
+  DECIDED /// 決定済み（意思決定へ転記済み）
+  DEFERRED /// 保留
+}
+
+enum CoObjectiveStatus {
+  ON_TRACK /// 順調
+  AT_RISK /// 黄信号
+  OFF_TRACK /// 未達見込み
+  ACHIEVED /// 達成
+  DROPPED /// 取り下げ
+}
+
+/// 情報の公開範囲。経営者だけが見る情報を分けるために使う
+enum CoVisibility {
+  ALL /// 全員
+  MANAGERS /// 責任者以上
+  OWNERS /// 経営者・管理者のみ
+}
+
+// ---------------------------------------------------------------------------
+// 会社
+// ---------------------------------------------------------------------------
+
+/// 経営の単位。買収した会社も1レコードとして並べて管理できる
+model CoCompany {
+  id              String    @id @default(cuid())
+  name            String
+  /// 登記上の商号（未定なら空。設立前は name に仮称を入れる運用）
+  legalName       String?
+  stage           CoStage   @default(IDEA)
+  /// 事業目的（定款に書く内容の下書きを兼ねる）
+  purpose         String?
+  /// 何のための会社か。ダッシュボードの一番上に出す
+  vision          String?
+  industry        String?
+  foundedOn       DateTime? @db.Date
+  /// 資本金（円）
+  capital         BigInt?
+  /// 決算月（1-12）
+  fiscalMonth     Int?
+  /// 法人番号（13桁）
+  corporateNumber String?
+  address         String?
+  phone           String?
+  website         String?
+  notes           String?
+  /// 会社を切り替えたときの並び順
+  sortOrder       Int       @default(0)
+  archived        Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members      CoMember[]
+  shareholders CoShareholder[]
+  projects     CoProject[]
+  tasks        CoTask[]
+  issues       CoIssue[]
+  decisions    CoDecision[]
+  questions    CoQuestion[]
+  meetings     CoMeeting[]
+  documents    CoDocument[]
+  objectives   CoObjective[]
+
+  @@index([archived, sortOrder])
+  @@map("co_companies")
+}
+
+/// 会社に属する人。ログインアカウント（User）が無い共同創業者も登録できる
+model CoMember {
+  id         String    @id @default(cuid())
+  companyId  String
+  company    CoCompany @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  /// ログインアカウントとの紐付け。未ログインの関係者は null のまま
+  userId     String?
+  name       String
+  email      String?
+  role       CoRole    @default(MEMBER)
+  /// 役職（代表取締役 / 取締役 など）
+  title      String?
+  /// 部署・担当領域
+  department String?
+  /// 役員かどうか（役員一覧に出す）
+  isOfficer  Boolean   @default(false)
+  note       String?
+  active     Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignedTasks   CoTask[]      @relation("CoTaskAssignee")
+  ownedProjects   CoProject[]   @relation("CoProjectOwner")
+  ownedIssues     CoIssue[]     @relation("CoIssueOwner")
+  ownedQuestions  CoQuestion[]  @relation("CoQuestionOwner")
+  ownedObjectives CoObjective[] @relation("CoObjectiveOwner")
+  decisions       CoDecision[]  @relation("CoDecisionDecider")
+  comments        CoComment[]
+
+  @@unique([companyId, userId])
+  @@index([companyId, active])
+  @@map("co_members")
+}
+
+/// 株主構成。設立時の出資比率をそのまま残す
+model CoShareholder {
+  id        String    @id @default(cuid())
+  companyId String
+  company   CoCompany @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name      String
+  /// 個人 / 法人
+  isCompany Boolean   @default(false)
+  /// 保有株式数
+  shares    Int?
+  /// 出資比率（%）。株式数が未定の段階でも比率だけ決められる
+  ratio     Float?
+  /// 出資額（円）
+  amount    BigInt?
+  note      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@map("co_shareholders")
+}
+
+// ---------------------------------------------------------------------------
+// プロジェクト / タスク
+// ---------------------------------------------------------------------------
+
+/// 会社の大きな仕事の単位（会社立ち上げ・会社買収・営業開始 など）
+model CoProject {
+  id               String          @id @default(cuid())
+  companyId        String
+  company          CoCompany       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
+  status           CoProjectStatus @default(PLANNING)
+  area             CoArea          @default(OTHER)
+  priority         CoPriority      @default(MEDIUM)
+  ownerId          String?
+  owner            CoMember?       @relation("CoProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  startOn          DateTime?       @db.Date
+  dueOn            DateTime?       @db.Date
+  /// 手入力の進捗率。null ならタスクの完了率から算出する
+  progressOverride Int?
+  color            String          @default("slate")
+  sortOrder        Int             @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks      CoTask[]
+  milestones CoMilestone[]
+  issues     CoIssue[]
+  decisions  CoDecision[]
+  questions  CoQuestion[]
+  documents  CoDocument[]
+
+  @@index([companyId, status, sortOrder])
+  @@map("co_projects")
+}
+
+/// プロジェクトの節目。ガント／タイムライン表示の基準線になる
+model CoMilestone {
+  id        String    @id @default(cuid())
+  projectId String
+  project   CoProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  dueOn     DateTime? @db.Date
+  done      Boolean   @default(false)
+  doneAt    DateTime?
+  sortOrder Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, sortOrder])
+  @@map("co_milestones")
+}
+
+/// 実行の最小単位。会社運営の中心
+model CoTask {
+  id          String       @id @default(cuid())
+  companyId   String
+  company     CoCompany    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  status      CoTaskStatus @default(TODO)
+  priority    CoPriority   @default(MEDIUM)
+  area        CoArea       @default(OTHER)
+
+  projectId  String?
+  project    CoProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  assigneeId String?
+  assignee   CoMember?  @relation("CoTaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  /// この課題を解決するためのタスク
+  issueId    String?
+  issue      CoIssue?   @relation(fields: [issueId], references: [id], onDelete: SetNull)
+  /// この会議で発生したタスク
+  meetingId  String?
+  meeting    CoMeeting? @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+
+  startOn     DateTime? @db.Date
+  dueOn       DateTime? @db.Date
+  completedAt DateTime?
+
+  /// 関連顧客・関連会社は自由記述。CRM（Phase2）が入ったら参照に置き換える
+  relatedCustomer String?
+  relatedParty    String?
+
+  /// 優先順位の算出に使う経営インパクト（0=なし 1=小 2=中 3=大）
+  revenueImpact Int @default(0)
+  riskImpact    Int @default(0)
+
+  /// テンプレートから生成したタスクの識別子。二重生成を防ぐ
+  templateKey String?
+
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  checklist    CoChecklistItem[]
+  comments     CoComment[]
+  documents    CoDocument[]
+  /// このタスクが待っている先行タスク
+  dependencies CoTaskDependency[] @relation("CoTaskDependent")
+  /// このタスクの完了を待っている後続タスク
+  dependents   CoTaskDependency[] @relation("CoTaskBlocker")
+
+  @@unique([companyId, templateKey])
+  @@index([companyId, status, dueOn])
+  @@index([companyId, assigneeId, status])
+  @@index([projectId, sortOrder])
+  @@map("co_tasks")
+}
+
+/// タスクの依存関係（taskId は dependsOnId の完了を待つ）
+model CoTaskDependency {
+  id          String @id @default(cuid())
+  taskId      String
+  task        CoTask @relation("CoTaskDependent", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOnId String
+  dependsOn   CoTask @relation("CoTaskBlocker", fields: [dependsOnId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([taskId, dependsOnId])
+  @@index([dependsOnId])
+  @@map("co_task_dependencies")
+}
+
+model CoChecklistItem {
+  id        String  @id @default(cuid())
+  taskId    String
+  task      CoTask  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  label     String
+  done      Boolean @default(false)
+  sortOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taskId, sortOrder])
+  @@map("co_checklist_items")
+}
+
+/// タスク・課題へのコメント。どちらか一方に必ず紐づく
+model CoComment {
+  id         String    @id @default(cuid())
+  taskId     String?
+  task       CoTask?   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  issueId    String?
+  issue      CoIssue?  @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  authorId   String?
+  author     CoMember? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  /// 投稿時点の名前。メンバーを消しても誰の発言か分かるようにする
+  authorName String
+  body       String
+
+  createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
+  @@index([issueId, createdAt])
+  @@map("co_comments")
+}
+
+// ---------------------------------------------------------------------------
+// 経営
+// ---------------------------------------------------------------------------
+
+/// 経営課題。「起きている問題」を放置しないための台帳
+model CoIssue {
+  id        String        @id @default(cuid())
+  companyId String
+  company   CoCompany     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  title     String
+  detail    String?
+  severity  CoSeverity    @default(MEDIUM)
+  status    CoIssueStatus @default(OPEN)
+  area      CoArea        @default(MANAGEMENT)
+
+  occurredOn DateTime? @db.Date
+  dueOn      DateTime? @db.Date
+  resolvedAt DateTime?
+
+  ownerId   String?
+  owner     CoMember?  @relation("CoIssueOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  projectId String?
+  project   CoProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  meetingId String?
+  meeting   CoMeeting? @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+
+  /// 原因
+  cause          String?
+  /// 対策
+  countermeasure String?
+  /// 次のアクション（タスク化していない段階の一文）
+  nextAction     String?
+
+  visibility CoVisibility @default(ALL)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks     CoTask[]
+  comments  CoComment[]
+  decisions CoDecision[]
+
+  @@index([companyId, status, severity])
+  @@map("co_issues")
+}
+
+/// 意思決定。「何を決めたか」を消さずに残す
+model CoDecision {
+  id          String       @id @default(cuid())
+  companyId   String
+  company     CoCompany    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  title       String
+  /// 背景
+  background  String?
+  /// そう決めた理由
+  reason      String?
+  decidedOn   DateTime     @db.Date
+  deciderId   String?
+  decider     CoMember?    @relation("CoDecisionDecider", fields: [deciderId], references: [id], onDelete: SetNull)
+  /// 決定者の表示名。メンバー未登録でも記録できるようにする
+  deciderName String?
+  area        CoArea       @default(MANAGEMENT)
+  /// ダッシュボードに出す重要な決定
+  important   Boolean      @default(false)
+  visibility  CoVisibility @default(ALL)
+
+  projectId String?
+  project   CoProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  issueId   String?
+  issue     CoIssue?   @relation(fields: [issueId], references: [id], onDelete: SetNull)
+  meetingId String?
+  meeting   CoMeeting? @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  revisions CoDecisionRevision[]
+  questions CoQuestion[]
+
+  @@index([companyId, decidedOn])
+  @@map("co_decisions")
+}
+
+/// 決定の変更履歴。「いつ、何が、なぜ変わったか」を追えるようにする
+model CoDecisionRevision {
+  id         String     @id @default(cuid())
+  decisionId String
+  decision   CoDecision @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+  /// 変更内容の要約
+  summary    String
+  /// 変更前の本文（title / background / reason をまとめた文字列）
+  before     String?
+  changedBy  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([decisionId, createdAt])
+  @@map("co_decision_revisions")
+}
+
+/// 未決事項。「まだ決まっていないこと」を見える場所に置く
+model CoQuestion {
+  id             String           @id @default(cuid())
+  companyId      String
+  company        CoCompany        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  title          String
+  /// 論点
+  point          String?
+  /// 選択肢。[{ "label": "...", "pros": "...", "cons": "..." }]
+  options        Json             @default("[]")
+  /// 推奨案
+  recommendation String?
+  status         CoQuestionStatus @default(OPEN)
+  severity       CoSeverity       @default(MEDIUM)
+  area           CoArea           @default(MANAGEMENT)
+  dueOn          DateTime?        @db.Date
+
+  ownerId    String?
+  owner      CoMember?   @relation("CoQuestionOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  projectId  String?
+  project    CoProject?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  meetingId  String?
+  meeting    CoMeeting?  @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+  /// 決まったときに作られた意思決定
+  decisionId String?
+  decision   CoDecision? @relation(fields: [decisionId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId, status, dueOn])
+  @@map("co_questions")
+}
+
+/// 会議ログ。決定事項・未決事項・タスクの発生源
+model CoMeeting {
+  id         String       @id @default(cuid())
+  companyId  String
+  company    CoCompany    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  title      String
+  heldAt     DateTime
+  /// 参加者（表示名の配列）
+  attendees  Json         @default("[]")
+  /// 議題
+  agenda     String?
+  /// 議事録の本文
+  minutes    String?
+  visibility CoVisibility @default(ALL)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks     CoTask[]
+  issues    CoIssue[]
+  decisions CoDecision[]
+  questions CoQuestion[]
+
+  @@index([companyId, heldAt])
+  @@map("co_meetings")
+}
+
+/// 経営目標とKPI。目標値と現在値を並べて達成度を出す
+model CoObjective {
+  id           String            @id @default(cuid())
+  companyId    String
+  company      CoCompany         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  title        String
+  description  String?
+  /// KPI として数値で追うか（false なら定性目標）
+  isKpi        Boolean           @default(false)
+  targetValue  Float?
+  currentValue Float?
+  /// 単位（円 / 件 / 社 / % など）
+  unit         String?
+  status       CoObjectiveStatus @default(ON_TRACK)
+  area         CoArea            @default(MANAGEMENT)
+  periodLabel  String?
+  /// ダッシュボードの経営数値カードと結びつける鍵（revenue_month など）。
+  /// 会社ごとに一意。財務モジュール（Phase2）が入るまでは、ここが唯一の数値の置き場になる
+  metricKey    String?
+  dueOn        DateTime?         @db.Date
+  ownerId      String?
+  owner        CoMember?         @relation("CoObjectiveOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  sortOrder    Int               @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, metricKey])
+  @@index([companyId, sortOrder])
+  @@map("co_objectives")
+}
+
+/// 重要書類・関連資料。実体は外部ストレージに置き、ここでは場所と期限だけ持つ
+model CoDocument {
+  id         String       @id @default(cuid())
+  companyId  String
+  company    CoCompany    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name       String
+  /// 保管場所（URL、または「金庫」「税理士預かり」などの文字列）
+  location   String?
+  area       CoArea       @default(COMPANY)
+  note       String?
+  /// 更新期限・満了日。法務の重要期限として一覧に出す
+  expiresOn  DateTime?    @db.Date
+  visibility CoVisibility @default(ALL)
+
+  projectId String?
+  project   CoProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  taskId    String?
+  task      CoTask?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId, area])
+  @@map("co_documents")
+}
