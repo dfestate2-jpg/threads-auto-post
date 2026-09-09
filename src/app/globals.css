@@ -378,3 +378,21 @@ body {
 :root[data-theme='dark'] ::placeholder {
   color: var(--t-5);
 }
+
+/* =========================================================================
+ * センチメントダッシュボード (/sentiment 配下)
+ *
+ * 追客管理側は明暗を切り替えられるが、こちらは相場画面なので常に暗い。
+ * html / body に色を置くと追客側まで巻き込むため、この 1 クラスの中だけで
+ * 完結させている。data-theme の指定より詳細度を上げて、どちらの明るさでも
+ * 同じ見た目になるようにする。
+ * ========================================================================= */
+
+.sentiment-root,
+:root[data-theme='dark'] .sentiment-root {
+  background-color: #0a0c10;
+  color: #e8ecf3;
+  color-scheme: dark;
+  font-family: ui-sans-serif, system-ui, 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
