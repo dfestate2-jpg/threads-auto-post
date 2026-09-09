@@ -2,6 +2,7 @@ import { HandlingStatus } from "@prisma/client";
 import Link from "next/link";
 
 import { AssigneeSelect } from "./AssigneeSelect";
+import { ResolveButton } from "./ResolveButton";
 import { StatusSelect } from "./StatusSelect";
 import { ElapsedBadge, formatDateTimeJa } from "./ui";
 
@@ -78,6 +79,13 @@ export function CustomerRows({
             {/* 担当は上のリンク内に文字で出さない。同じ情報が2か所にあると、
                 どちらを直せばよいのか分からなくなる */}
             <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+              {r.handlingStatus === "DONE" ? null : (
+                <ResolveButton
+                  customerId={r.customerId}
+                  customerName={r.name}
+                  version={r.version}
+                />
+              )}
               <StatusSelect
                 customerId={r.customerId}
                 customerName={r.name}
@@ -161,6 +169,18 @@ export function CustomerRows({
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
+                      {/*
+                        一覧でいちばん多い操作が「対応済みにする」なので、
+                        プルダウンを開かせず1タップで済ませる。
+                        既に対応済みの行には出さない（押す意味がない）
+                      */}
+                      {r.handlingStatus === "DONE" ? null : (
+                        <ResolveButton
+                          customerId={r.customerId}
+                          customerName={r.name}
+                          version={r.version}
+                        />
+                      )}
                       <StatusSelect
                         customerId={r.customerId}
                         customerName={r.name}

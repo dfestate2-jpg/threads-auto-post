@@ -103,3 +103,9 @@ jobs:
       # MAIL_PROVIDER を設定しないためドライランになり、外部へは送信しない
       - name: Integration check (email campaign)
         run: npx tsx scripts/e2e-campaign.ts
+
+      # 追客ボードの中核。角度から次回追客日が決まること、反応がないと間隔が空くこと、
+      # そして**リマインドのテーブルに一切書き込まないこと**を実DBで確かめる。
+      # 最後に置いてあるのは、このスクリプトが顧客と担当者を消して始めるため
+      - name: Integration check (追客ボード)
+        run: npx tsx scripts/board-check.ts

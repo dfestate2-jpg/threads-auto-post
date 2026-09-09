@@ -1,8 +1,8 @@
-import { CampaignChannel, PropertyType } from '@prisma/client'
+import { CampaignChannel } from '@prisma/client'
 import { NextResponse } from 'next/server'
-import { z } from 'zod'
 
 import { requireApiSession } from '@/lib/auth/guard'
+import { campaignSchema } from '@/lib/domain/campaignInput'
 import { assertSameOrigin, handleApiError, jsonError } from '@/lib/http'
 import { prisma } from '@/lib/prisma'
 import { campaignSelectForList } from '@/lib/services/campaign'
@@ -23,21 +23,6 @@ export async function GET(): Promise<NextResponse> {
     return handleApiError(e)
   }
 }
-
-export const campaignSchema = z.object({
-  name: z.string().min(1).max(120),
-  subject: z.string().min(1).max(200),
-  body: z.string().min(1).max(20000),
-  channel: z.nativeEnum(CampaignChannel).default(CampaignChannel.EMAIL),
-  propertyIds: z.array(z.string()).max(20).default([]),
-  segAreas: z.array(z.string().max(60)).max(20).default([]),
-  segBudgetMin: z.number().int().min(0).max(10_000_000).nullable().optional(),
-  segBudgetMax: z.number().int().min(0).max(10_000_000).nullable().optional(),
-  segTypes: z.array(z.nativeEnum(PropertyType)).max(5).default([]),
-  segOptedInOnly: z.boolean().default(true),
-  segLineSilentOnly: z.boolean().default(false),
-  segLineSilentDays: z.number().int().min(1).max(365).default(30),
-})
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {

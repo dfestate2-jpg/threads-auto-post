@@ -1,11 +1,16 @@
 import Link from 'next/link'
 
 import { LogoutButton } from './LogoutButton'
+import { ThemeToggle } from './ThemeToggle'
 
 const NAV = [
-  { href: '/', label: '今日やること' },
-  { href: '/customers', label: '顧客' },
+  // 追客ボード。営業が毎日触るのはこの3つだけ
+  { href: '/board/today', label: '今日やること' },
+  { href: '/board', label: 'ヒアリングシート' },
+  { href: '/board/list', label: '追客一覧' },
+  // ここから下はリマインドシステム側。触っていない
   { href: '/reminders', label: '未返信' },
+  { href: '/customers', label: '顧客' },
   { href: '/contacts', label: '配信先リスト' },
   { href: '/campaigns', label: '一斉配信' },
   { href: '/admin', label: '管理者' },
@@ -26,10 +31,15 @@ export function AppShell({ children, alert }: { children: React.ReactNode; alert
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-7xl px-4">
           <div className="flex items-center justify-between gap-3 pt-3 sm:pt-4">
-            <Link href="/" className="text-base font-bold sm:text-lg">
-              追客管理
+            {/* 名前が長いぶん、狭い画面では折り返る。行間を詰めておかないと
+                ヘッダーだけが間延びして、下のナビゲーションが押し下げられる */}
+            <Link href="/" className="text-base font-bold leading-tight sm:text-lg">
+              追客管理＆リマインドシステム
             </Link>
-            <LogoutButton />
+            <div className="flex flex-none items-center gap-3">
+              <ThemeToggle />
+              <LogoutButton />
+            </div>
           </div>
           <nav className="-mx-1 flex gap-1 overflow-x-auto pb-1 pt-2 sm:pt-3">
             {NAV.map((n) => (

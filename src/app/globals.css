@@ -32,3 +32,349 @@ body {
 .btn-danger {
   @apply btn bg-red-600 text-white hover:bg-red-500;
 }
+
+/* =========================================================================
+ * ダークモード
+ *
+ * 色は各画面に直接書かれている（bg-white、text-slate-500 など111種類）。
+ * 画面ごとに dark: を足していく作り方だと、**触らないと決めている
+ * リマインド側の画面まで全部書き換える**ことになる。
+ *
+ * そこでここ1か所で、使われている色クラスの中身だけを差し替える。
+ * 画面のファイルは1つも変えない。新しい画面を足しても、同じ色クラスを
+ * 使うかぎり自動でダークになる。
+ *
+ * `[data-theme="dark"] .bg-white` は `.bg-white` より詳細度が高いので、
+ * !important を使わずに勝つ。順番にも依存しない。
+ * ========================================================================= */
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* 面の高さ。奥から手前へ、少しずつ明るくする */
+  --s-bg: #0f141c; /* 一番奥（ページ全体） */
+  --s-1: #171e2a; /* カード・ヘッダー */
+  --s-2: #1f2836; /* その上に乗るもの */
+  --s-3: #2a3444;
+  --s-4: #38455c; /* 選択中・コード枠 */
+
+  /* 線。面より少しだけ明るい程度に留める。強いと枠だけが目立つ */
+  --l-1: #232c3a;
+  --l-2: #2c3547;
+  --l-3: #3b4658;
+  --l-4: #4b586c;
+
+  /* 文字。白は使わず、少し青を残すと目が疲れにくい */
+  --t-1: #e6ecf5; /* 見出し */
+  --t-2: #d2dae7;
+  --t-3: #b2bccd;
+  --t-4: #93a1b7; /* 補足 */
+  --t-5: #7a8698; /* 薄い補足 */
+}
+
+:root[data-theme='dark'] body {
+  background-color: var(--s-bg);
+  color: var(--t-1);
+}
+
+/* --- 部品（globals.css で組み立てているもの） ------------------------- */
+
+:root[data-theme='dark'] .card {
+  background-color: var(--s-1);
+  border-color: var(--l-2);
+  box-shadow: none;
+}
+:root[data-theme='dark'] .label {
+  color: var(--t-3);
+}
+:root[data-theme='dark'] .input {
+  background-color: var(--s-2);
+  border-color: var(--l-3);
+  color: var(--t-1);
+}
+:root[data-theme='dark'] .input:focus {
+  border-color: var(--l-4);
+  --tw-ring-color: var(--l-4);
+}
+/* 主ボタンは明るくする。暗い面に暗いボタンを置くと押す場所が消える */
+:root[data-theme='dark'] .btn-primary {
+  background-color: #dbe3ee;
+  color: #10151d;
+}
+:root[data-theme='dark'] .btn-primary:hover {
+  background-color: #c3cedd;
+}
+:root[data-theme='dark'] .btn-secondary {
+  background-color: var(--s-2);
+  border-color: var(--l-3);
+  color: var(--t-2);
+}
+:root[data-theme='dark'] .btn-secondary:hover {
+  background-color: var(--s-3);
+}
+
+/* --- 無彩色 ------------------------------------------------------------ */
+
+:root[data-theme='dark'] .bg-white {
+  background-color: var(--s-1);
+}
+:root[data-theme='dark'] .bg-slate-50 {
+  background-color: var(--s-2);
+}
+:root[data-theme='dark'] .bg-slate-100 {
+  background-color: var(--s-2);
+}
+:root[data-theme='dark'] .hover\:bg-slate-100:hover {
+  background-color: var(--s-3);
+}
+:root[data-theme='dark'] .hover\:bg-slate-50:hover {
+  background-color: var(--s-2);
+}
+:root[data-theme='dark'] .bg-slate-200 {
+  background-color: var(--s-3);
+}
+:root[data-theme='dark'] .bg-slate-400 {
+  background-color: var(--l-4);
+}
+/* 選択中の印。暗い面では「濃くする」ではなく「明るくする」で表す */
+:root[data-theme='dark'] .bg-slate-700,
+:root[data-theme='dark'] .bg-slate-800,
+:root[data-theme='dark'] .bg-slate-900 {
+  background-color: var(--s-4);
+}
+:root[data-theme='dark'] .hover\:bg-slate-700:hover {
+  background-color: var(--l-4);
+}
+
+:root[data-theme='dark'] .border-slate-100 {
+  border-color: var(--l-1);
+}
+:root[data-theme='dark'] .border-slate-200 {
+  border-color: var(--l-2);
+}
+:root[data-theme='dark'] .border-slate-300 {
+  border-color: var(--l-3);
+}
+:root[data-theme='dark'] .border-slate-400,
+:root[data-theme='dark'] .border-slate-500,
+:root[data-theme='dark'] .border-slate-900 {
+  border-color: var(--l-4);
+}
+:root[data-theme='dark'] .divide-slate-100 > * + * {
+  border-color: var(--l-1);
+}
+:root[data-theme='dark'] .ring-slate-500,
+:root[data-theme='dark'] .ring-slate-900,
+:root[data-theme='dark'] .focus\:ring-slate-500:focus {
+  --tw-ring-color: var(--l-4);
+}
+:root[data-theme='dark'] .focus\:border-slate-500:focus {
+  border-color: var(--l-4);
+}
+
+:root[data-theme='dark'] .text-slate-900,
+:root[data-theme='dark'] .text-slate-800,
+:root[data-theme='dark'] .hover\:text-slate-900:hover {
+  color: var(--t-1);
+}
+:root[data-theme='dark'] .text-slate-700 {
+  color: var(--t-2);
+}
+:root[data-theme='dark'] .text-slate-600 {
+  color: var(--t-3);
+}
+:root[data-theme='dark'] .text-slate-500 {
+  color: var(--t-4);
+}
+:root[data-theme='dark'] .text-slate-400,
+:root[data-theme='dark'] .text-slate-300 {
+  color: var(--t-5);
+}
+:root[data-theme='dark'] .text-slate-100 {
+  color: var(--t-1);
+}
+
+/* --- 状態の色 -----------------------------------------------------------
+ *
+ * 期限超過の赤、角度の橙、済みの緑。これらは**意味を持っている**ので、
+ * 暗くしても赤は赤、緑は緑と分かる必要がある。
+ * 明るい面の淡い色（bg-red-50）をそのまま暗くすると濁って見分けが付かないため、
+ * 「暗く深い地」＋「明るい文字」に置き換える。
+ * ------------------------------------------------------------------------ */
+
+/* 赤：期限超過・エラー */
+:root[data-theme='dark'] .bg-red-50 {
+  background-color: #3a1a1f;
+}
+:root[data-theme='dark'] .bg-red-100 {
+  background-color: #4a2027;
+}
+:root[data-theme='dark'] .bg-red-200 {
+  background-color: #5c2831;
+}
+:root[data-theme='dark'] .border-red-200 {
+  border-color: #5a2932;
+}
+:root[data-theme='dark'] .border-red-300 {
+  border-color: #71353f;
+}
+:root[data-theme='dark'] .text-red-600 {
+  color: #f9a8a8;
+}
+:root[data-theme='dark'] .text-red-700 {
+  color: #fca5a5;
+}
+:root[data-theme='dark'] .text-red-800,
+:root[data-theme='dark'] .text-red-900 {
+  color: #fecdd3;
+}
+
+/* 橙：注意・角度4 */
+:root[data-theme='dark'] .bg-orange-50 {
+  background-color: #38240f;
+}
+:root[data-theme='dark'] .bg-orange-100 {
+  background-color: #472d14;
+}
+:root[data-theme='dark'] .bg-orange-200 {
+  background-color: #573719;
+}
+:root[data-theme='dark'] .border-orange-200 {
+  border-color: #56381c;
+}
+:root[data-theme='dark'] .border-orange-300 {
+  border-color: #6c4522;
+}
+:root[data-theme='dark'] .text-orange-600,
+:root[data-theme='dark'] .text-orange-700 {
+  color: #fdba74;
+}
+:root[data-theme='dark'] .text-orange-800,
+:root[data-theme='dark'] .text-orange-900 {
+  color: #fed7aa;
+}
+
+/* 琥珀：角度3・保留 */
+:root[data-theme='dark'] .bg-amber-50 {
+  background-color: #36290d;
+}
+:root[data-theme='dark'] .bg-amber-100 {
+  background-color: #453412;
+}
+:root[data-theme='dark'] .border-amber-200 {
+  border-color: #533f18;
+}
+:root[data-theme='dark'] .text-amber-700 {
+  color: #fcd34d;
+}
+:root[data-theme='dark'] .text-amber-800,
+:root[data-theme='dark'] .text-amber-900 {
+  color: #fde68a;
+}
+
+/* 緑・翠：済み・成約 */
+:root[data-theme='dark'] .bg-green-50,
+:root[data-theme='dark'] .bg-emerald-50 {
+  background-color: #10291e;
+}
+:root[data-theme='dark'] .bg-green-100,
+:root[data-theme='dark'] .bg-emerald-100,
+:root[data-theme='dark'] .bg-teal-100 {
+  background-color: #163627;
+}
+:root[data-theme='dark'] .border-green-200,
+:root[data-theme='dark'] .border-emerald-200,
+:root[data-theme='dark'] .border-teal-200 {
+  border-color: #1d4632;
+}
+:root[data-theme='dark'] .border-green-300 {
+  border-color: #24583e;
+}
+:root[data-theme='dark'] .border-green-700 {
+  border-color: #34d399;
+}
+:root[data-theme='dark'] .text-green-700,
+:root[data-theme='dark'] .text-emerald-700 {
+  color: #6ee7b7;
+}
+:root[data-theme='dark'] .text-green-800,
+:root[data-theme='dark'] .text-emerald-800,
+:root[data-theme='dark'] .text-teal-800 {
+  color: #a7f3d0;
+}
+
+/* 青・空・藍：情報 */
+:root[data-theme='dark'] .bg-blue-50 {
+  background-color: #122336;
+}
+:root[data-theme='dark'] .bg-blue-100,
+:root[data-theme='dark'] .bg-sky-100,
+:root[data-theme='dark'] .bg-indigo-100 {
+  background-color: #172d44;
+}
+:root[data-theme='dark'] .border-blue-200,
+:root[data-theme='dark'] .border-sky-200,
+:root[data-theme='dark'] .border-indigo-200 {
+  border-color: #1f3c58;
+}
+:root[data-theme='dark'] .text-blue-600,
+:root[data-theme='dark'] .text-blue-700,
+:root[data-theme='dark'] .text-sky-700,
+:root[data-theme='dark'] .text-indigo-700 {
+  color: #93c5fd;
+}
+:root[data-theme='dark'] .text-blue-800,
+:root[data-theme='dark'] .text-sky-800,
+:root[data-theme='dark'] .text-indigo-800 {
+  color: #bfdbfe;
+}
+
+/* 紫・薔薇：分類の色 */
+:root[data-theme='dark'] .bg-purple-50 {
+  background-color: #241a35;
+}
+:root[data-theme='dark'] .bg-purple-100,
+:root[data-theme='dark'] .bg-violet-100 {
+  background-color: #2c2044;
+}
+:root[data-theme='dark'] .bg-rose-100 {
+  background-color: #3d1c28;
+}
+:root[data-theme='dark'] .border-purple-200,
+:root[data-theme='dark'] .border-violet-200 {
+  border-color: #3a2b58;
+}
+:root[data-theme='dark'] .border-rose-200 {
+  border-color: #532634;
+}
+:root[data-theme='dark'] .text-purple-800,
+:root[data-theme='dark'] .text-violet-700,
+:root[data-theme='dark'] .text-violet-800 {
+  color: #ddd6fe;
+}
+:root[data-theme='dark'] .text-rose-700,
+:root[data-theme='dark'] .text-rose-800 {
+  color: #fecdd3;
+}
+
+/* 縁が太い印（border-*-400）は、そのままだと暗い面で沈む */
+:root[data-theme='dark'] .border-amber-400 {
+  border-color: #d97706;
+}
+:root[data-theme='dark'] .border-blue-400,
+:root[data-theme='dark'] .border-sky-400,
+:root[data-theme='dark'] .border-indigo-400 {
+  border-color: #3b82f6;
+}
+:root[data-theme='dark'] .border-emerald-400 {
+  border-color: #10b981;
+}
+:root[data-theme='dark'] .border-rose-400,
+:root[data-theme='dark'] .border-violet-400 {
+  border-color: #a78bfa;
+}
+
+/* 入力欄の薄い文字。指定が無いと、暗い面ではほぼ読めなくなる */
+:root[data-theme='dark'] ::placeholder {
+  color: var(--t-5);
+}
