@@ -36,3 +36,9 @@
 # netlify/functions/reminders-cron.mts が /api/cron/reminders を呼び出す。
 [functions."reminders-cron"]
   schedule = "*/5 * * * *"
+
+# 1分ごとに配信キューを消化する。
+# netlify/functions/campaign-cron.mts が /api/cron/campaign を呼び出す。
+# 1回あたり MAIL_BATCH_SIZE 件（既定100件）を送るので、3,000件は約30分で送り切る。
+[functions."campaign-cron"]
+  schedule = "* * * * *"
