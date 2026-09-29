@@ -45,6 +45,8 @@ export interface RunSummary {
   failed: number
   watchdog: number
   durationMs: number
+  /** 一時停止中だったため、この回は何もしなかった */
+  paused?: boolean
 }
 
 type ProcessOutcome = 'sent' | 'skipped' | 'failed'
@@ -632,7 +634,35 @@ export async function runReminderJob(now = new Date()): Promise<RunSummary> {
       enabled: r.enabled,
     }))
 
-    summary.watchdog = await runWatchdog(ctx, directory, now)
+    /**
+     * 一時停止。
+     *
+     * **送らずに繰り延べる。** 営業時間外と同じ考え方で、止めている間に
+     * 期限が来たものは消えず、再開後の実行でまとめて処理される。
+     * 予定（nextReminderAt）を書き換えないので、止める／再開するのに
+     * 全会話を触る必要がなく、途中で落ちても状態が壊れない。
+     */
+    const pausedUntil = ctx.settings.remindersPausedUntil
+    if (pausedUntil && pausedUntil.getTime() > now.getTime()) {
+      // 実行記録は finally 側で残る。定期実行そのものは動いているので死活監視は緑のまま
+      summary.paused = true
+      return summary
+    }
+
+    /**
+     * 停止が明けた最初の1回。
+     *
+     * ここで見張り番を回すと、**止めていたせいで期限を過ぎた分**を
+     * 「配信が遅延している」と誤検知して管理者に警告が飛ぶ。
+     * この直後に本人たちへ送るので、1回だけ見送る。
+     * 期限を消すことが、その「1回だけ」の目印を兼ねている。
+     */
+    const justResumed = pausedUntil !== null
+    if (justResumed) {
+      await prisma.appSettings.update({ where: { id: 1 }, data: { remindersPausedUntil: null } })
+    }
+
+    summary.watchdog = justResumed ? 0 : await runWatchdog(ctx, directory, now)
 
     const leaseUntil = addMinutes(now, CLAIM_LEASE_MINUTES)
     const ids = await claimDueConversations(now, leaseUntil, BATCH_SIZE)

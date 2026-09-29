@@ -49,13 +49,24 @@ export default async function ReminderDashboardPage() {
    * 通数の枯渇は「定期実行が止まる」のと同じ結果（リマインドが届かない）を招く。
    * カードの中だけに出すと気づかれないので、画面の一番上にも出す。
    */
+  /**
+   * 止めていることを忘れるのが、この機能で一番怖い失敗。
+   * **定期実行が止まったのと同じ結果**（誰にも通知が届かない）になるので、
+   * 同じ重さで画面の一番上に出し、通数やCronの警告より優先して見せる。
+   */
+  const pausedUntil = settings.remindersPausedUntil
+  const pauseAlert =
+    pausedUntil && pausedUntil.getTime() > now.getTime()
+      ? `⏸ リマインドを一時停止中です（${formatDateTimeJa(pausedUntil, settings.timezone)} まで）。この間、未返信があっても通知されません。`
+      : null
+
   const quotaAlert =
     usage.used >= usage.quota
       ? "🚨 LINEの無料通数を使い切りました。ライトプランでは追加送信ができないため、リマインドが届いていない可能性があります。"
       : null;
 
   return (
-    <AppShell alert={quotaAlert ?? cronAlert}>
+    <AppShell alert={pauseAlert ?? quotaAlert ?? cronAlert}>
       <AutoRefresh />
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">未返信リマインド</h1>

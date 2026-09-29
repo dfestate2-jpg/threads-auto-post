@@ -403,6 +403,13 @@ model AppSettings {
   /// バックオフの上限（分）。これ以上は間隔を広げない。0 = 上限なし
   maxReminderIntervalMinutes Int     @default(480)
 
+  /// リマインド全体を一時停止している期限。NULL = 停止していない。
+  /// **必ず期限を持たせる。** 無期限に止められると、止めたことを忘れた時点で
+  /// 「見逃さない」という仕組みそのものが静かに死ぬ
+  remindersPausedUntil DateTime?
+  /// 「一時停止」を1回押したときに止める長さ（分）
+  pauseMinutes         Int       @default(60)
+
   /// LINE公式アカウントの月間無料メッセージ通数（ライトプラン = 5,000）。
   /// 「あと何通で止まるか」を出すためだけに使う値で、送信は止めない。
   lineMonthlyFreeQuota Int @default(5000)
