@@ -4,6 +4,7 @@ import { AppShell } from '@/components/AppShell'
 import { ChannelTable } from '@/components/settings/ChannelTable'
 import { EscalationForm } from '@/components/settings/EscalationForm'
 import { GeneralForm, type GeneralSettings } from '@/components/settings/GeneralForm'
+import { PauseCard } from '@/components/settings/PauseCard'
 import { HolidayTable } from '@/components/settings/HolidayTable'
 import { RelayReceiptTable } from '@/components/settings/RelayReceiptTable'
 import { StaffTable } from '@/components/settings/StaffTable'
@@ -57,6 +58,15 @@ export default async function SettingsPage() {
         </Link>
       </div>
       <div className="space-y-6">
+        {/*
+          止めていることに気づけないのが一番まずいので、入口の状態と並べて先頭に置く。
+          設定を下までたどらないと分からない場所には置かない
+        */}
+        <PauseCard
+          pausedUntil={settings.remindersPausedUntil}
+          pauseMinutes={settings.pauseMinutes}
+          timezone={settings.timezone}
+        />
         {/* 入口が動いているかは最優先で目に入るべきなので先頭に置く */}
         <RelayReceiptTable rows={receipts} timezone={settings.timezone} />
         <GeneralForm initial={general} appBaseUrl={env.appBaseUrl} />
