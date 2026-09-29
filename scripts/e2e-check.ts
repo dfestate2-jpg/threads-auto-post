@@ -766,6 +766,68 @@ async function main(): Promise<void> {
       usageRows.filter((r) => r.channel === 'LINE_GROUP').map((r) => r.units),
     )
 
+    // ---------------------------------------------------------------------
+    /**
+     * リマインド全体の一時停止。
+     *
+     * 「止まること」より **「止めた分が消えないこと」** が本題。
+     * 送らずに繰り延べるので、明けた実行でまとめて届かなければ意味がない。
+     */
+    console.log('\n⑲ リマインド全体を一時停止する')
+    await reset()
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: { respectBusinessHours: false, reminderBackoffEnabled: false, digestRepeatReminders: false, remindersPausedUntil: null },
+    })
+    await prisma.notificationChannel.create({
+      data: { name: '社内LINEグループ', type: ChannelType.LINE_GROUP, target: 'Ginternal', purpose: ChannelPurpose.DEFAULT_GROUP },
+    })
+
+    const P0 = new Date('2026-08-27T00:00:00Z')
+    await inbound('Upause1', '一時停止の検証', P0, 'msg-pause-1')
+    const pConv = await prisma.conversation.findFirstOrThrow({ where: { customer: { lineUserId: 'Upause1' } } })
+
+    // 期限が来ても、止めている間は送らない
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: { remindersPausedUntil: new Date(P0.getTime() + 300 * MIN) },
+    })
+    const pausedRun = await runReminderJob(new Date(P0.getTime() + 120 * MIN))
+    check('停止中は何も処理しない', pausedRun.paused === true && pausedRun.sent === 0, pausedRun)
+    const duringPause = await prisma.reminder.count({ where: { conversationId: pConv.id, status: 'SENT' } })
+    check('停止中は1通も送られない', duringPause === 0, duringPause)
+
+    // 定期実行そのものは動いているので、死活監視は緑のまま保たれる
+    const lastRun = await prisma.cronRun.findFirst({ where: { job: 'reminders' }, orderBy: { startedAt: 'desc' } })
+    check('停止中でも実行記録は残る（死活監視が赤くならない）', lastRun?.finishedAt !== null, lastRun?.finishedAt)
+
+    /** 明けたら、止めていた分が消えずに届く */
+    const resumeRun = await runReminderJob(new Date(P0.getTime() + 310 * MIN))
+    check('明けたら送られる', resumeRun.sent >= 1, resumeRun)
+    check('明けた回は見張り番を回さない', resumeRun.watchdog === 0, resumeRun.watchdog)
+
+    const afterResume = await prisma.appSettings.findUniqueOrThrow({ where: { id: 1 } })
+    check('明けたら停止期限が消える', afterResume.remindersPausedUntil === null, afterResume.remindersPausedUntil)
+
+    const pSent = await prisma.reminder.findMany({
+      where: { conversationId: pConv.id, status: 'SENT' },
+      orderBy: { scheduledFor: 'asc' },
+    })
+    check('止めていた分が届いている', pSent.length >= 1, pSent.length)
+    check('経過時間は止めた分も進んでいる', (pSent[0]?.unrepliedMinutes ?? 0) >= 300, pSent[0]?.unrepliedMinutes)
+
+    /** 次の回からは見張り番が通常どおり戻る */
+    const normalRun = await runReminderJob(new Date(P0.getTime() + 320 * MIN))
+    check('次の回は通常運転に戻る', normalRun.paused === undefined, normalRun.paused)
+
+    /** 期限切れの停止は効かない（止めっぱなしにならない） */
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: { remindersPausedUntil: new Date(P0.getTime() - 60 * MIN) },
+    })
+    const expiredRun = await runReminderJob(new Date(P0.getTime() + 330 * MIN))
+    check('期限切れの停止では止まらない', expiredRun.paused === undefined, expiredRun)
+
   } finally {
     server.close()
     await prisma.$disconnect()
