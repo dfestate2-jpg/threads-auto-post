@@ -2,18 +2,19 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
 import { requireApiSession } from '@/lib/auth/guard'
+import { MAX_PAUSE_MINUTES, resolvePauseUntil, type PauseRequest } from '@/lib/domain/pauseDuration'
 import { assertSameOrigin, handleApiError, jsonError } from '@/lib/http'
 import { prisma } from '@/lib/prisma'
+import { getSettings } from '@/lib/services/settings'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-/** 止めすぎの歯止め。これ以上は祝日・臨時休業日の設定で表現すべき範囲 */
-const MAX_PAUSE_MINUTES = 24 * 60
-
 const schema = z.object({
   /** 止める長さ（分）。0 以下 = 今すぐ再開 */
-  minutes: z.number().int().min(0).max(MAX_PAUSE_MINUTES),
+  minutes: z.number().int().min(0).max(MAX_PAUSE_MINUTES).optional(),
+  /** 「今日いっぱい」。日付が変わる時刻はタイムゾーン設定に従う */
+  mode: z.literal('end_of_day').optional(),
 })
 
 /**
@@ -32,16 +33,16 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const parsed = schema.safeParse(await request.json().catch(() => null))
     if (!parsed.success) return jsonError('入力値が不正です', 400)
+    const { minutes, mode } = parsed.data
+    if (mode === undefined && minutes === undefined) return jsonError('入力値が不正です', 400)
 
     // 0 = 再開。押すたびに延びるのではなく、そこで終わりにできる経路を必ず残す
-    if (parsed.data.minutes <= 0) {
-      await prisma.appSettings.update({ where: { id: 1 }, data: { remindersPausedUntil: null } })
-      return NextResponse.json({ ok: true, pausedUntil: null })
-    }
+    const req: PauseRequest = mode === 'end_of_day' ? { kind: 'endOfDay' } : { kind: 'minutes', minutes: minutes ?? 0 }
+    const settings = await getSettings()
+    const until = resolvePauseUntil(req, settings.timezone, new Date())
 
-    const until = new Date(Date.now() + parsed.data.minutes * 60_000)
     await prisma.appSettings.update({ where: { id: 1 }, data: { remindersPausedUntil: until } })
-    return NextResponse.json({ ok: true, pausedUntil: until.toISOString() })
+    return NextResponse.json({ ok: true, pausedUntil: until?.toISOString() ?? null })
   } catch (e) {
     return handleApiError(e)
   }
