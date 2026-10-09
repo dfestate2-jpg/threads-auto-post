@@ -34,6 +34,7 @@ export interface GeneralSettings {
   maxSilenceGuardMinutes: number
   reminderBackoffEnabled: boolean
   maxReminderIntervalMinutes: number
+  inProgressMinutes: number
   lineMonthlyFreeQuota: number
   watchdogDelayMinutes: number
   alwaysNotifyDefaultGroup: boolean
@@ -109,9 +110,15 @@ export function GeneralForm({ initial, appBaseUrl }: { initial: GeneralSettings;
             <option value={60}>1時間ごと</option>
             <option value={120}>2時間ごと</option>
             <option value={180}>3時間ごと</option>
+            <option value={240}>4時間ごと</option>
+            <option value={360}>6時間ごと</option>
             <option value={0}>通知しない</option>
           </select>
-          <p className="mt-1 text-xs text-slate-500">顧客ごとに個別設定で上書きできます。</p>
+          <p className="mt-1 text-xs text-slate-500">
+            <strong>通知が多すぎるときはここを長くします。</strong>
+            1回目の通知（下の「初回リマインドまでの時間」）は変わらないので、見つけるのが遅くなることはありません。
+            顧客ごとに個別設定で上書きできます。
+          </p>
         </div>
 
         <div>
@@ -173,6 +180,23 @@ export function GeneralForm({ initial, appBaseUrl }: { initial: GeneralSettings;
         </div>
 
         <div>
+          <label className="label">✅ を押したあと黙る時間（分）</label>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={1440}
+            value={s.inProgressMinutes}
+            onChange={(e) => setS({ ...s, inProgressMinutes: Number(e.target.value) })}
+          />
+          <p className="hint">
+            「対応済みにする」を押した顧客を、この時間だけ<strong>「対応中」として鳴らしません</strong>。
+            公式LINEからの返信はシステムに届かないため、これが無いとやり取り1往復ごとにリマインドが出ます。
+            180 = 3時間。0 で無効（従来どおり1件だけ閉じる）。期限が切れてまだ未返信なら普通に鳴ります。
+          </p>
+        </div>
+
+        <div>
           <label className="label">LINEの月間無料メッセージ通数</label>
           <input
             className="input"
@@ -209,7 +233,7 @@ export function GeneralForm({ initial, appBaseUrl }: { initial: GeneralSettings;
             ['alwaysNotifyDefaultGroup', '担当者が決まっていても、社内共通の通知先へ同報する（事務など担当者以外も返信する場合）'],
             [
               'digestRepeatReminders',
-              '2回目以降のリマインドを1通にまとめる（初回とエスカレーションはボタン付きの個別通知のまま）',
+              '2回目以降のリマインドを1通にまとめる（同じ実行タイミングで同時に期限が来た分だけが1通になります。時刻がずれていればまとまりません）',
             ],
             [
               'reminderBackoffEnabled',

@@ -167,6 +167,7 @@ export default async function ReminderDashboardPage() {
                 handlingStatus: c.handlingStatus,
                 version: c.version,
                 resolvedAt: c.resolvedAt,
+                inProgressUntil: c.inProgressUntil,
               }))}
               staff={staff.map((s) => ({ id: s.id, name: s.name }))}
               timezone={settings.timezone}

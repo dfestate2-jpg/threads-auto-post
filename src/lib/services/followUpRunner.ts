@@ -12,7 +12,7 @@
 import { ActionType, FollowUpSource, type Customer } from '@prisma/client'
 
 import { ACTION_TYPE_LABEL, CUSTOMER_STATUS_LABEL, TERMINAL_STATUSES, rulesForStatus } from '@/lib/domain/followUp'
-import type { NotifyTarget } from '@/lib/domain/escalation'
+import { resolveFollowUpTargets, type NotifyTarget } from '@/lib/domain/escalation'
 import { dispatchNotification } from '@/lib/notify/dispatcher'
 import { prisma } from '@/lib/prisma'
 import {
@@ -23,6 +23,7 @@ import {
   type FollowUpContext,
 } from './followUp'
 import { loadNotifyDirectory } from './notifyTargets'
+import { getSettings } from './settings'
 
 /** 1回の実行で処理する上限。取りこぼしは次の実行で処理される */
 const BATCH_LIMIT = 500
@@ -54,6 +55,17 @@ async function processDueCustomers(ctx: FollowUpContext): Promise<{ transitioned
   let notified = 0
   let failed = 0
   const directory = await loadNotifyDirectory()
+  const settings = await getSettings()
+
+  /**
+   * 一時停止中は通知だけを見送る。
+   *
+   * ここで記録（FollowUpLog）を残さずに素通りさせるので、段階は消えずに
+   * **次の実行で繰り延べられる**。未返信リマインドの一時停止と同じ考え方。
+   * 自動遷移（休眠への移行など）は通知ではないので止めない。
+   */
+  const pausedUntil = settings.remindersPausedUntil
+  const paused = pausedUntil !== null && pausedUntil.getTime() > ctx.now.getTime()
 
   for (const customer of due) {
     try {
@@ -80,8 +92,8 @@ async function processDueCustomers(ctx: FollowUpContext): Promise<{ transitioned
       }
 
       // --- ② 営業マンへの通知が必要な段階 ---
-      if (rule.notifyStaff) {
-        const sent = await notifyStaffOfDueAction(customer, ctx, directory)
+      if (rule.notifyStaff && !paused) {
+        const sent = await notifyStaffOfDueAction(customer, ctx, directory, settings.alwaysNotifyDefaultGroup)
         if (sent) notified += 1
       }
     } catch (e) {
@@ -100,26 +112,32 @@ type Directory = Awaited<ReturnType<typeof loadNotifyDirectory>>
  * 記録を残してから送るので、同じ段階で何度も鳴ることはない。
  */
 async function notifyStaffOfDueAction(
-  customer: Customer & { assignee: { id: string; name: string; lineUserId: string | null; notifyEnabled: boolean } | null },
+  customer: Customer & {
+    assignee: { id: string; name: string; lineUserId: string | null; notifyEnabled: boolean; active: boolean } | null
+  },
   ctx: FollowUpContext,
   directory: Directory,
+  alwaysIncludeGroup: boolean,
 ): Promise<boolean> {
   const dedupeKey = `notify:${customer.id}:${customer.status}:${customer.statusSince.toISOString()}:${customer.followUpStep}`
   const already = await prisma.followUpLog.findUnique({ where: { dedupeKey } })
   if (already) return false
 
-  const targets: NotifyTarget[] = []
-  if (customer.assignee?.lineUserId && customer.assignee.notifyEnabled) {
-    targets.push({
-      channel: 'LINE_USER',
-      target: customer.assignee.lineUserId,
-      label: customer.assignee.name,
-      role: 'ASSIGNEE',
-    })
-  }
-  for (const ch of directory.groupChannels) {
-    targets.push({ channel: ch.type, target: ch.target, label: ch.name, role: 'GROUP' })
-  }
+  // 宛先の判断は domain 側の純粋関数に寄せてある（未返信リマインドと同じ原則）
+  const targets: NotifyTarget[] = resolveFollowUpTargets({
+    assignee: customer.assignee
+      ? {
+          id: customer.assignee.id,
+          name: customer.assignee.name,
+          lineUserId: customer.assignee.lineUserId,
+          notifyEnabled: customer.assignee.notifyEnabled,
+          // 退職者（無効な担当者）には送らない。送っても誰も見ないため
+          active: customer.assignee.active,
+        }
+      : null,
+    groupChannels: directory.groupChannels,
+    alwaysIncludeGroup,
+  })
   if (targets.length === 0) return false
 
   const name = customer.name ?? customer.displayName ?? '（名称未登録）'

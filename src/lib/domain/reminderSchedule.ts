@@ -43,6 +43,15 @@ export interface ScheduleState {
   lastReminderAt: Date | null
   /** 既に発火済みのエスカレーション段階（分）。これ以下の閾値は再スケジュールしない */
   escalationLevel?: number
+  /**
+   * 「対応中」として鳴らさない期限。
+   *
+   * 公式LINEからの返信はWebhookに流れてこないため、システムは営業が返信したことを
+   * 知れない。だから「未返信60分」が1往復ごとに成立し、返信済みの案件で鳴り続ける。
+   * ✅ を押した時点を起点にこの期限を置き、**予定を消さずに繰り延べる**。
+   * 期限が切れてまだ未返信なら、普通のリマインドとしてそのまま鳴る。
+   */
+  quietUntil?: Date | null
 }
 
 export type ScheduleReason =
@@ -52,6 +61,7 @@ export type ScheduleReason =
   | 'INTERVAL'
   | 'SILENCE_GUARD'
   | 'ESCALATION'
+  | 'IN_PROGRESS'
 
 export interface ScheduleResult {
   /** 次回リマインド時刻。null = 送らない */
@@ -166,6 +176,20 @@ export function computeNextReminderAt(state: ScheduleState, policy: SchedulePoli
       kind = 'GUARD'
       reason = 'SILENCE_GUARD'
     }
+  }
+
+  /**
+   * 「対応中」は最後に床として当てる。
+   *
+   * エスカレーションも保険も、**消すのではなく後ろへ動かす**。消すと
+   * 「一度対応した案件が、そのあと止まっても二度と鳴らない」状態を作ってしまい、
+   * このシステムの目的そのものを壊す。
+   * 営業時間の繰り延べより前に当てるので、期限が営業時間外に落ちた場合も
+   * 翌営業日の開始時刻まで素直に送られる。
+   */
+  if (state.quietUntil && state.quietUntil.getTime() > candidate.getTime()) {
+    candidate = state.quietUntil
+    reason = 'IN_PROGRESS'
   }
 
   if (policy.respectBusinessHours) {

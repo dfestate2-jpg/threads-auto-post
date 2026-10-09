@@ -19,6 +19,8 @@ const schema = z.object({
   /** 0 = 通知しない / null = 全体設定に従う */
   reminderIntervalMinutes: z.number().int().min(0).max(10080).nullable().optional(),
   handlingStatus: z.nativeEnum(HandlingStatus).optional(),
+  /** 「対応中」を解除して、すぐ監視に戻す */
+  releaseInProgress: z.boolean().optional(),
   /** 楽観ロック用。会話の version を送る */
   version: z.number().int().optional(),
 
@@ -122,6 +124,20 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           data: { handlingStatus: body.handlingStatus, version: { increment: 1 } },
         })
       }
+    }
+
+    /**
+     * 「対応中」の手動解除。
+     *
+     * 黙っている理由が画面で見えても、そこから戻せないと「止まっていることに
+     * 気づいたのに止められない」状態になる。期限を消してから引き直す。
+     */
+    if (body.releaseInProgress && customer.conversation) {
+      await prisma.conversation.update({
+        where: { id: customer.conversation.id },
+        data: { inProgressUntil: null, version: { increment: 1 } },
+      })
+      await rescheduleConversation(customer.conversation.id, ctx)
     }
 
     // 担当者・通知間隔が変わったらリマインド予定を引き直す

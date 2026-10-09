@@ -119,6 +119,14 @@ export async function recordInboundMessage(input: InboundInput, ctx: PolicyConte
         reminderCount: wasAwaiting ? conversation.reminderCount : 0,
         lastReminderAt: wasAwaiting ? conversation.lastReminderAt : null,
         escalationLevel: wasAwaiting ? conversation.escalationLevel : 0,
+        /**
+         * 新しいメッセージが来ても「対応中」は解除しない。ここが要。
+         *
+         * 公式LINEからの返信を検知できないので、✅ のあとに顧客が返事をすると
+         * 従来は「未返信サイクルが新規に始まった」として60分後に鳴っていた。
+         * やり取りが続く相手ほどこれが積み上がり、通知が多すぎて見なくなる。
+         */
+        quietUntil: conversation.inProgressUntil,
       },
       policy,
     )
@@ -240,6 +248,17 @@ export async function recordOutboundMessage(
 
     const stillAwaiting = isAwaitingReply(conversation.lastInboundAt, newLastOutboundAt)
 
+    /**
+     * 返信した（または ✅ を押した）時点から「対応中」の窓を張り直す。
+     *
+     * 1押しで1件を閉じるだけだと、やり取り1往復ごとに押し直すことになる。
+     * 窓を持たせることで、1押しがそのやり取り全体をカバーする。
+     * 0 のときは従来どおり（窓なし）。
+     */
+    const inProgressMinutes = ctx.settings.inProgressMinutes
+    const inProgressUntil =
+      inProgressMinutes > 0 ? new Date(input.sentAt.getTime() + inProgressMinutes * 60_000) : null
+
     if (!stillAwaiting) {
       // 完全に追いついた = 対応済み。リマインドを止める
       await tx.conversation.update({
@@ -261,6 +280,7 @@ export async function recordOutboundMessage(
           resolvedAt: input.sentAt,
           resolvedVia: input.via,
           resolvedById: input.resolvedById ?? null,
+          inProgressUntil,
           version: { increment: 1 },
         },
       })
@@ -293,7 +313,14 @@ export async function recordOutboundMessage(
     const awaitingSince = conversation.lastInboundAt ?? input.sentAt
     const firstUnrepliedAt = firstUnreplied?.sentAt ?? awaitingSince
     const schedule = computeNextReminderAt(
-      { awaitingSince, firstUnrepliedAt, reminderCount: 0, lastReminderAt: null, escalationLevel: 0 },
+      {
+        awaitingSince,
+        firstUnrepliedAt,
+        reminderCount: 0,
+        lastReminderAt: null,
+        escalationLevel: 0,
+        quietUntil: inProgressUntil,
+      },
       buildPolicy(ctx, customer.reminderIntervalMinutes),
     )
 
@@ -315,6 +342,7 @@ export async function recordOutboundMessage(
         resolvedAt: null,
         resolvedVia: null,
         resolvedById: null,
+        inProgressUntil,
         version: { increment: 1 },
       },
     })
@@ -388,6 +416,8 @@ export async function rescheduleConversation(conversationId: string, ctx: Policy
         reminderCount: conversation.reminderCount,
         lastReminderAt: conversation.lastReminderAt,
         escalationLevel: conversation.escalationLevel,
+        // 「対応中」の期限は引き直しでも尊重する（担当者を変えただけで鳴り出さないように）
+        quietUntil: conversation.inProgressUntil,
       },
       buildPolicy(ctx, conversation.customer.reminderIntervalMinutes),
     )

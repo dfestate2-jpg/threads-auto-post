@@ -39,6 +39,7 @@ export default async function SettingsPage() {
     countBusinessHoursOnly: settings.countBusinessHoursOnly,
     reminderBackoffEnabled: settings.reminderBackoffEnabled,
     maxReminderIntervalMinutes: settings.maxReminderIntervalMinutes,
+    inProgressMinutes: settings.inProgressMinutes,
     lineMonthlyFreeQuota: settings.lineMonthlyFreeQuota,
     maxSilenceGuardMinutes: settings.maxSilenceGuardMinutes,
     watchdogDelayMinutes: settings.watchdogDelayMinutes,

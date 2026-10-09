@@ -294,6 +294,13 @@ model Conversation {
   resolvedVia  ResolvedVia?
   resolvedById String?
 
+  /// 「対応中」として鳴らさない期限。NULL = 対応中ではない。
+  /// 公式LINEからの返信はWebhookに流れてこないため、システムは営業が返信したことを
+  /// 知れない。やり取りが続いている相手ほど「返信済みなのに鳴る」通知が積み上がる。
+  /// ✅ を押した時点から一定時間をこの状態にして、往復のたびに鳴るのを止める。
+  /// **必ず期限を持たせる。** 無期限に黙ると、押し忘れた時点で見逃しが始まる
+  inProgressUntil DateTime?
+
   /// 楽観ロック。管理画面の同時編集による上書き事故を防ぐ
   version   Int      @default(0)
   createdAt DateTime @default(now())
@@ -306,6 +313,7 @@ model Conversation {
   @@index([replyState, nextReminderAt])
   @@index([handlingStatus])
   @@index([awaitingSince])
+  @@index([inProgressUntil])
   @@map("conversations")
 }
 
@@ -409,6 +417,12 @@ model AppSettings {
   remindersPausedUntil DateTime?
   /// 「一時停止」を1回押したときに止める長さ（分）
   pauseMinutes         Int       @default(60)
+
+  /// ✅「対応済みにする」を押したあと、その顧客を「対応中」として鳴らさない時間（分）。
+  /// 0 = 無効（押した直後の1件だけを閉じる従来の挙動）。
+  /// 公式LINEからの返信を検知できないため、1往復ごとに偽のリマインドが出る。
+  /// 1押しでそのやり取り全体をカバーさせるための値
+  inProgressMinutes Int @default(180)
 
   /// LINE公式アカウントの月間無料メッセージ通数（ライトプラン = 5,000）。
   /// 「あと何通で止まるか」を出すためだけに使う値で、送信は止めない。
