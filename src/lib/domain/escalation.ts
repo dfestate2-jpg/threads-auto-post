@@ -162,3 +162,30 @@ export function resolveNotifyTargets(input: ResolveTargetsInput): NotifyTarget[]
   }
   return resolved
 }
+
+/**
+ * 追客の期限通知の宛先を解決する。
+ *
+ * 未返信リマインドと同じ原則に揃えてある。
+ * - 基本の宛先は担当者
+ * - 社内共通グループへの同報は設定（`alwaysIncludeGroup`）に従う
+ * - 担当者が決まっていない／通知を受け取れない顧客だけは、必ずグループへ送る
+ *
+ * 以前はここだけ無条件にグループへ同報していた。設定で「担当者のみ」にしても
+ * 他人の案件が全員に鳴るため、**通知が多すぎて誰も見なくなる**という形で
+ * 「未返信を見逃さない」という目的そのものを損なっていた。
+ */
+export function resolveFollowUpTargets(input: {
+  assignee: StaffTarget | null
+  groupChannels: ChannelTarget[]
+  alwaysIncludeGroup: boolean
+}): NotifyTarget[] {
+  const out: NotifyTarget[] = []
+  pushStaff(out, input.assignee, 'ASSIGNEE')
+
+  // 担当者に届かないなら、受け皿としてのグループ同報は設定に関わらず必要
+  if (input.alwaysIncludeGroup || out.length === 0) {
+    pushChannels(out, input.groupChannels, 'GROUP')
+  }
+  return dedupe(out)
+}

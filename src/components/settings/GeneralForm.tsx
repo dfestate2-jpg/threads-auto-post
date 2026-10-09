@@ -109,9 +109,15 @@ export function GeneralForm({ initial, appBaseUrl }: { initial: GeneralSettings;
             <option value={60}>1時間ごと</option>
             <option value={120}>2時間ごと</option>
             <option value={180}>3時間ごと</option>
+            <option value={240}>4時間ごと</option>
+            <option value={360}>6時間ごと</option>
             <option value={0}>通知しない</option>
           </select>
-          <p className="mt-1 text-xs text-slate-500">顧客ごとに個別設定で上書きできます。</p>
+          <p className="mt-1 text-xs text-slate-500">
+            <strong>通知が多すぎるときはここを長くします。</strong>
+            1回目の通知（下の「初回リマインドまでの時間」）は変わらないので、見つけるのが遅くなることはありません。
+            顧客ごとに個別設定で上書きできます。
+          </p>
         </div>
 
         <div>
@@ -209,7 +215,7 @@ export function GeneralForm({ initial, appBaseUrl }: { initial: GeneralSettings;
             ['alwaysNotifyDefaultGroup', '担当者が決まっていても、社内共通の通知先へ同報する（事務など担当者以外も返信する場合）'],
             [
               'digestRepeatReminders',
-              '2回目以降のリマインドを1通にまとめる（初回とエスカレーションはボタン付きの個別通知のまま）',
+              '2回目以降のリマインドを1通にまとめる（同じ実行タイミングで同時に期限が来た分だけが1通になります。時刻がずれていればまとまりません）',
             ],
             [
               'reminderBackoffEnabled',
