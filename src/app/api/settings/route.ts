@@ -22,6 +22,8 @@ const dayHours = z.object({
 const schema = z.object({
   timezone: z.string().min(1).optional(),
   defaultReminderIntervalMinutes: z.number().int().min(0).max(10080).optional(),
+  // 「対応中」の長さ。上限24時間。これ以上黙ると押し忘れが見逃しに直結する
+  inProgressMinutes: z.number().int().min(0).max(1440).optional(),
   firstReminderDelayMinutes: z.number().int().min(1).max(10080).optional(),
   maxRemindersPerCycle: z.number().int().min(0).max(100).optional(),
   businessHours: z

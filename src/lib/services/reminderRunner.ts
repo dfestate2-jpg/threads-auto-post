@@ -171,6 +171,24 @@ async function processConversation(
     return { kind: 'DONE', outcome: 'skipped' }
   }
 
+  /**
+   * 「対応中」のあいだは送らず、期限まで繰り延べる。
+   *
+   * 公式LINEからの返信はWebhookに流れてこないため、システムは営業が返信したことを
+   * 知れない。✅ を押したあとに顧客が返事をすると、従来はそこから新しい未返信
+   * サイクルが始まり60分後に鳴っていた。やり取りが続く相手ほどこれが積み上がる。
+   *
+   * **消すのではなく後ろへ動かす。** 期限が切れてまだ未返信なら、普通のリマインド
+   * としてそのまま鳴る（段階も経過時間どおりに上がる）。
+   */
+  if (conversation.inProgressUntil && conversation.inProgressUntil.getTime() > now.getTime()) {
+    await prisma.conversation.update({
+      where: { id: conversationId },
+      data: { nextReminderAt: conversation.inProgressUntil, version: { increment: 1 } },
+    })
+    return { kind: 'DONE', outcome: 'skipped' }
+  }
+
   // ---------------------------------------------------------------------
   // 営業時間外は「送らない」のではなく「次の営業開始まで繰り延べる」
   // ---------------------------------------------------------------------
@@ -337,6 +355,7 @@ async function processConversation(
           conversation.escalationLevel,
           currentEscalationLevel(totalUnrepliedMinutes, rules),
         ),
+        quietUntil: conversation.inProgressUntil,
       },
       policy,
     )

@@ -2,6 +2,7 @@ import { HandlingStatus } from "@prisma/client";
 import Link from "next/link";
 
 import { AssigneeSelect } from "./AssigneeSelect";
+import { InProgressBadge } from "./InProgressBadge";
 import { ResolveButton } from "./ResolveButton";
 import { StatusSelect } from "./StatusSelect";
 import { ElapsedBadge, formatDateTimeJa } from "./ui";
@@ -20,6 +21,8 @@ export interface CustomerRow {
   reminderCount: number;
   handlingStatus: HandlingStatus;
   resolvedAt: Date | null;
+  /** 「対応中」で鳴らさない期限。過去・null なら監視中 */
+  inProgressUntil: Date | null;
   /** 楽観ロック用。同時操作の上書きを防ぐ */
   version: number;
 }
@@ -79,6 +82,15 @@ export function CustomerRows({
             {/* 担当は上のリンク内に文字で出さない。同じ情報が2か所にあると、
                 どちらを直せばよいのか分からなくなる */}
             <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+              {r.inProgressUntil && r.inProgressUntil.getTime() > Date.now() ? (
+                <InProgressBadge
+                  customerId={r.customerId}
+                  customerName={r.name}
+                  until={r.inProgressUntil}
+                  timezone={timezone}
+                  version={r.version}
+                />
+              ) : null}
               {r.handlingStatus === "DONE" ? null : (
                 <ResolveButton
                   customerId={r.customerId}
@@ -191,6 +203,15 @@ export function CustomerRows({
                         <span className="whitespace-nowrap text-xs text-slate-500">
                           {r.reminderCount}回
                         </span>
+                      ) : null}
+                      {r.inProgressUntil && r.inProgressUntil.getTime() > Date.now() ? (
+                        <InProgressBadge
+                          customerId={r.customerId}
+                          customerName={r.name}
+                          until={r.inProgressUntil}
+                          timezone={timezone}
+                          version={r.version}
+                        />
                       ) : null}
                     </div>
                   </td>

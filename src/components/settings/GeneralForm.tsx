@@ -34,6 +34,7 @@ export interface GeneralSettings {
   maxSilenceGuardMinutes: number
   reminderBackoffEnabled: boolean
   maxReminderIntervalMinutes: number
+  inProgressMinutes: number
   lineMonthlyFreeQuota: number
   watchdogDelayMinutes: number
   alwaysNotifyDefaultGroup: boolean
@@ -175,6 +176,23 @@ export function GeneralForm({ initial, appBaseUrl }: { initial: GeneralSettings;
           />
           <p className="hint">
             下の「間隔を広げていく」がONのとき、ここまで間隔を広げます。480 = 8時間。0 で上限なし。
+          </p>
+        </div>
+
+        <div>
+          <label className="label">✅ を押したあと黙る時間（分）</label>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={1440}
+            value={s.inProgressMinutes}
+            onChange={(e) => setS({ ...s, inProgressMinutes: Number(e.target.value) })}
+          />
+          <p className="hint">
+            「対応済みにする」を押した顧客を、この時間だけ<strong>「対応中」として鳴らしません</strong>。
+            公式LINEからの返信はシステムに届かないため、これが無いとやり取り1往復ごとにリマインドが出ます。
+            180 = 3時間。0 で無効（従来どおり1件だけ閉じる）。期限が切れてまだ未返信なら普通に鳴ります。
           </p>
         </div>
 

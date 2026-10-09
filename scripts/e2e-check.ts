@@ -16,7 +16,7 @@ import { ChannelPurpose, ChannelType, PrismaClient, ReplyState, ResolvedVia } fr
 import { DEFAULT_BUSINESS_HOURS } from '../src/lib/domain/businessHours'
 import { loadPolicyContext } from '../src/lib/services/context'
 import { loadFollowUpContext } from '../src/lib/services/followUp'
-import { recordInboundMessage, recordOutboundMessage } from '../src/lib/services/conversation'
+import { recordInboundMessage, recordOutboundMessage, rescheduleConversation } from '../src/lib/services/conversation'
 import { runReminderJob } from '../src/lib/services/reminderRunner'
 import { applyQuickAction } from '../src/lib/services/quickAction'
 import { buildAssignActionData, buildResolveActionData } from '../src/lib/line/quickAction'
@@ -827,6 +827,112 @@ async function main(): Promise<void> {
     })
     const expiredRun = await runReminderJob(new Date(P0.getTime() + 330 * MIN))
     check('期限切れの停止では止まらない', expiredRun.paused === undefined, expiredRun)
+
+
+    /**
+     * 「対応中」の窓。
+     *
+     * 公式LINEからの返信はWebhookに流れてこないため、システムは営業が返信したことを
+     * 知れない。✅ のあとに顧客が返事をすると、従来はそこから新しい未返信サイクルが
+     * 始まり、**やり取り1往復ごとにリマインドが出ていた**。
+     * ここで確かめるのは「1押しがやり取り全体をカバーすること」と
+     * 「それでも期限が切れれば必ず鳴ること」の両方。
+     */
+    console.log('\n⑳ 対応中のあいだは鳴らさない（やり取り1往復ごとのリマインドを止める）')
+    await reset()
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: {
+        respectBusinessHours: false,
+        reminderBackoffEnabled: false,
+        digestRepeatReminders: false,
+        remindersPausedUntil: null,
+        inProgressMinutes: 180,
+      },
+    })
+    await prisma.notificationChannel.create({
+      data: { name: '社内LINEグループ', type: ChannelType.LINE_GROUP, target: 'Ginternal', purpose: ChannelPurpose.DEFAULT_GROUP },
+    })
+
+    const W0 = new Date('2026-08-28T00:00:00Z')
+    const wCtx = await loadPolicyContext()
+    await inbound('Uwip1', '内見したいです', W0, 'msg-wip-1')
+    const wConv = await prisma.conversation.findFirstOrThrow({ where: { customer: { lineUserId: 'Uwip1' } } })
+    const wCustomerId = wConv.customerId
+
+    const wSentCount = async (): Promise<number> =>
+      prisma.reminder.count({ where: { conversationId: wConv.id, status: 'SENT' } })
+
+    // 60分で1通目。ここは従来どおり鳴る（まだ一度も対応していない）
+    await runReminderJob(new Date(W0.getTime() + 60 * MIN))
+    check('まだ対応していない案件は従来どおり鳴る', (await wSentCount()) === 1, await wSentCount())
+
+    // ✅ を押す（＝公式LINEで返信した、という人からの申告）
+    await recordOutboundMessage(
+      { customerId: wCustomerId, text: null, sentAt: new Date(W0.getTime() + 65 * MIN), source: 'LINE_POSTBACK', via: ResolvedVia.LINE_POSTBACK },
+      wCtx,
+      await loadFollowUpContext(),
+    )
+    const wAfterResolve = await prisma.conversation.findUniqueOrThrow({ where: { id: wConv.id } })
+    check('✅ で対応中の期限が入る', wAfterResolve.inProgressUntil !== null, wAfterResolve.inProgressUntil)
+    check(
+      '期限は押した時点から3時間後',
+      wAfterResolve.inProgressUntil?.getTime() === W0.getTime() + (65 + 180) * MIN,
+      wAfterResolve.inProgressUntil,
+    )
+
+    // 顧客が返事をする → 従来はここから60分後に鳴っていた
+    await inbound('Uwip1', '明日の15時はどうですか', new Date(W0.getTime() + 70 * MIN), 'msg-wip-2')
+    const wAfterInbound = await prisma.conversation.findUniqueOrThrow({ where: { id: wConv.id } })
+    check('新しいメッセージでも対応中は解除されない', wAfterInbound.inProgressUntil !== null)
+    check(
+      '次回予定が対応中の期限まで繰り延べられる',
+      wAfterInbound.nextReminderAt?.getTime() === W0.getTime() + (65 + 180) * MIN,
+      wAfterInbound.nextReminderAt,
+    )
+
+    // 従来は鳴っていた時刻（70分 + 60分 = 130分）
+    await runReminderJob(new Date(W0.getTime() + 130 * MIN))
+    check('やり取りが続いている間は鳴らない', (await wSentCount()) === 1, await wSentCount())
+
+    // さらに往復しても鳴らない。1押しがやり取り全体をカバーする
+    await inbound('Uwip1', 'お願いします', new Date(W0.getTime() + 150 * MIN), 'msg-wip-3')
+    await runReminderJob(new Date(W0.getTime() + 215 * MIN))
+    check('何往復しても鳴らない（押し直しが要らない）', (await wSentCount()) === 1, await wSentCount())
+
+    // 期限が切れて、まだ未返信なら普通に鳴る。ここが「見逃さない」の担保
+    await runReminderJob(new Date(W0.getTime() + 250 * MIN))
+    check('期限が切れたら普通のリマインドに戻る', (await wSentCount()) === 2, await wSentCount())
+
+    /** 手動解除は期限を待たずに監視へ戻す */
+    await recordOutboundMessage(
+      { customerId: wCustomerId, text: null, sentAt: new Date(W0.getTime() + 255 * MIN), source: 'LINE_POSTBACK', via: ResolvedVia.LINE_POSTBACK },
+      wCtx,
+      await loadFollowUpContext(),
+    )
+    await inbound('Uwip1', 'まだ返事がないのですが', new Date(W0.getTime() + 260 * MIN), 'msg-wip-4')
+    await prisma.conversation.update({ where: { id: wConv.id }, data: { inProgressUntil: null } })
+    await rescheduleConversation(wConv.id, wCtx)
+    const wReleased = await prisma.conversation.findUniqueOrThrow({ where: { id: wConv.id } })
+    check(
+      '解除すると通常の予定（最新メッセージ+60分）へ戻る',
+      wReleased.nextReminderAt?.getTime() === W0.getTime() + 320 * MIN,
+      wReleased.nextReminderAt,
+    )
+    await runReminderJob(new Date(W0.getTime() + 320 * MIN))
+    check('解除後は予定どおり鳴る', (await wSentCount()) === 3, await wSentCount())
+
+    /** 0 を入れれば従来の挙動（窓なし）に戻せる */
+    await prisma.appSettings.update({ where: { id: 1 }, data: { inProgressMinutes: 0 } })
+    // 設定は毎回DBから読まれる。ここで読み直さないと古い値のまま検証してしまう
+    const wCtxOff = await loadPolicyContext()
+    await recordOutboundMessage(
+      { customerId: wCustomerId, text: null, sentAt: new Date(W0.getTime() + 330 * MIN), source: 'LINE_POSTBACK', via: ResolvedVia.LINE_POSTBACK },
+      wCtxOff,
+      await loadFollowUpContext(),
+    )
+    const wOff = await prisma.conversation.findUniqueOrThrow({ where: { id: wConv.id } })
+    check('0 なら期限を付けない（従来の挙動）', wOff.inProgressUntil === null, wOff.inProgressUntil)
 
   } finally {
     server.close()
