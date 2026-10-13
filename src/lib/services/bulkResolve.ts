@@ -1,4 +1,4 @@
-import { ReplyState } from '@prisma/client'
+import { type Prisma, ReplyState } from '@prisma/client'
 
 import { prisma } from '@/lib/prisma'
 import { markResolvedManually } from './conversation'
@@ -80,4 +80,56 @@ export async function bulkResolveConversations(
   }
 
   return { resolved, skipped }
+}
+
+/**
+ * 1回の呼び出しで閉じる上限。
+ *
+ * 「すべて閉じる」は件数が読めないので、1リクエストで全部やろうとすると
+ * 実行環境の制限時間に当たって途中で切れる。切れると処理済みの分は確定して
+ * いるのに画面に結果が返らず、**どこまで済んだか分からない**状態になる。
+ * そこで小分けにし、残りがあることを呼び出し側へ返して続きを頼む。
+ */
+export const RESOLVE_ALL_BATCH = 40
+
+export interface ResolveAllResult extends BulkResolveResult {
+  /** まだ閉じられていない件数。0 になるまで呼び出し側が繰り返す */
+  remaining: number
+}
+
+/**
+ * 絞り込み条件に当てはまる未返信を、まとめて「対応済み」にする。
+ *
+ * 1件ずつチェックを付ける運用が現実的でないため、**選択なしで押せる入口**を用意した。
+ * 対象は画面の1ページではなく**絞り込み条件の全件**。見えている50件だけが閉じると、
+ * 「全部閉じたつもりで2ページ目が残る」という最悪の勘違いが起きる。
+ *
+ * 版（version）の確認はしない。選択なしで押すボタンなので、画面を開いた時点の
+ * 版という概念がない。代わりに **その瞬間に未返信であること** を1件ずつ確かめて閉じる。
+ */
+export async function resolveAllMatching(
+  where: Prisma.ConversationWhereInput,
+  actor: { id: string | null; staffId: string | null },
+  ctx: PolicyContext,
+  followUpCtx: FollowUpContext,
+  limit: number = RESOLVE_ALL_BATCH,
+): Promise<ResolveAllResult> {
+  const batch = await prisma.conversation.findMany({
+    where,
+    select: { customerId: true },
+    // 待たせている順。途中で切れても「古いものから閉じた」と言える並びにする
+    orderBy: [{ firstUnrepliedAt: 'asc' }, { updatedAt: 'desc' }],
+    take: Math.max(1, Math.min(limit, RESOLVE_ALL_BATCH)),
+  })
+
+  const result = await bulkResolveConversations(
+    batch.map((c) => ({ customerId: c.customerId })),
+    actor,
+    ctx,
+    followUpCtx,
+  )
+
+  // 閉じたあとに数え直す。処理中に届いた新しい問い合わせも残りとして拾える
+  const remaining = await prisma.conversation.count({ where })
+  return { ...result, remaining }
 }

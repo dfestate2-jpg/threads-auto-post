@@ -51,12 +51,18 @@ export function CustomerRows({
    * 全体を見ていない場所で一括操作をさせると、選び漏れに気づけない
    */
   bulkResolve = false,
+  /** 絞り込み条件に当てはまる全件数。ページをまたいだ合計 */
+  total,
+  /** 確認文に出す絞り込みの説明 */
+  filterDescription,
 }: {
   rows: CustomerRow[];
   /** 担当者プルダウンの選択肢 */
   staff: { id: string; name: string }[];
   timezone: string;
   bulkResolve?: boolean;
+  total?: number;
+  filterDescription?: string;
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -315,6 +321,8 @@ export function CustomerRows({
       {bulkResolve ? (
         <BulkResolveBar
           selected={selected}
+          total={total ?? rows.length}
+          filterDescription={filterDescription ?? 'すべて'}
           onDone={() => setSelectedIds(new Set())}
           onClear={() => setSelectedIds(new Set())}
         />
