@@ -27,20 +27,24 @@ const OPTIONS: { label: string; body: { minutes: number } | { mode: 'end_of_day'
  */
 export function PauseCard({
   pausedUntil,
+  pauseIndefinite,
   pauseMinutes,
   timezone,
 }: {
   pausedUntil: Date | null
+  /** 期限を決めない停止（「再開」を押すまで止まったまま） */
+  pauseIndefinite: boolean
   /** 既定の長さ（分）。この長さのボタンを推奨として目立たせる */
   pauseMinutes: number
   timezone: string
 }) {
   const router = useRouter()
   const [until, setUntil] = useState<Date | null>(pausedUntil)
+  const [indefinite, setIndefinite] = useState(pauseIndefinite)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const paused = until !== null && until.getTime() > Date.now()
+  const paused = indefinite || (until !== null && until.getTime() > Date.now())
 
   async function send(body: Record<string, unknown>): Promise<void> {
     setBusy(true)
@@ -56,8 +60,9 @@ export function PauseCard({
         setError(parsed?.error ?? '変更できませんでした')
         return
       }
-      const data = (await res.json()) as { pausedUntil: string | null }
+      const data = (await res.json()) as { pausedUntil: string | null; indefinite: boolean }
       setUntil(data.pausedUntil ? new Date(data.pausedUntil) : null)
+      setIndefinite(data.indefinite)
       router.refresh()
     } catch {
       setError('通信に失敗しました')
@@ -86,7 +91,14 @@ export function PauseCard({
 
       {paused ? (
         <div className="mb-3 rounded bg-white px-3 py-2 text-sm font-medium text-orange-900">
-          ⏸ 停止中です（{label} まで）。この間、未返信があっても誰にも通知されません。
+          {indefinite ? (
+            <>
+              ⏸ 停止中です（<strong>期限なし</strong>）。
+              「▶ 今すぐ再開」を押すまで、未返信があっても誰にも通知されません。
+            </>
+          ) : (
+            <>⏸ 停止中です（{label} まで）。この間、未返信があっても誰にも通知されません。</>
+          )}
         </div>
       ) : null}
 
@@ -105,8 +117,22 @@ export function PauseCard({
             </button>
           )
         })}
+        {/*
+          期限を決めない停止。
+          「いつ戻るか決まっていない」ときは、1時間ごとに押し直すより
+          止めたままにして再開を1回押すほうが実態に合う。
+          ただし自動では戻らないので、見た目で区別が付くようにしてある
+        */}
+        <button
+          type="button"
+          className={indefinite ? 'btn' : 'btn border-orange-300 text-orange-800'}
+          disabled={busy}
+          onClick={() => void send({ mode: 'indefinite' })}
+        >
+          ⏸ 再開するまで止める
+        </button>
         {paused ? (
-          <button type="button" className="btn-primary" disabled={busy} onClick={() => void send({ minutes: 0 })}>
+          <button type="button" className="btn-primary" disabled={busy} onClick={() => void send({ mode: 'resume' })}>
             ▶ 今すぐ再開
           </button>
         ) : null}
@@ -115,7 +141,12 @@ export function PauseCard({
       <p className="mt-2 text-xs text-slate-500">
         {paused
           ? '停止中に長さを押すと、押した時点から数え直して期限が引き直されます（延ばすことも縮めることもできます）。'
-          : '止められるのは最長24時間までです。休業日など数日単位で止めたいときは、営業日の設定で登録してください。'}
+          : '長さを選んだ停止は最長24時間までで、期限が切れると自動で再開します。'}
+      </p>
+      <p className="mt-1 text-xs text-slate-500">
+        ⚠️「再開するまで止める」は<strong>自動では戻りません。</strong>
+        止めている間は未返信があっても誰にも通知されないので、画面の最上部に警告を出し続けます。
+        戻し忘れを防ぐため、いつ戻るか決まっているときは長さを選ぶほうが安全です。
       </p>
 
       {error ? <p className="mt-2 text-xs text-red-600">{error}</p> : null}

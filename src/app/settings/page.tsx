@@ -65,6 +65,7 @@ export default async function SettingsPage() {
         */}
         <PauseCard
           pausedUntil={settings.remindersPausedUntil}
+          pauseIndefinite={settings.remindersPauseIndefinite}
           pauseMinutes={settings.pauseMinutes}
           timezone={settings.timezone}
         />

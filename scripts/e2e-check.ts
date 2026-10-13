@@ -18,6 +18,7 @@ import { loadPolicyContext } from '../src/lib/services/context'
 import { loadFollowUpContext } from '../src/lib/services/followUp'
 import { recordInboundMessage, recordOutboundMessage, rescheduleConversation } from '../src/lib/services/conversation'
 import { runReminderJob } from '../src/lib/services/reminderRunner'
+import { bulkResolveConversations } from '../src/lib/services/bulkResolve'
 import { applyQuickAction } from '../src/lib/services/quickAction'
 import { buildAssignActionData, buildResolveActionData } from '../src/lib/line/quickAction'
 
@@ -933,6 +934,178 @@ async function main(): Promise<void> {
     )
     const wOff = await prisma.conversation.findUniqueOrThrow({ where: { id: wConv.id } })
     check('0 なら期限を付けない（従来の挙動）', wOff.inProgressUntil === null, wOff.inProgressUntil)
+
+
+    /**
+     * 期限を決めない停止。
+     *
+     * 確かめたいのは「止まること」だけでなく、**自動では戻らないこと**と
+     * **再開で確実に戻ること**の両方。期限付き停止と違って時間では戻らないので、
+     * 戻す経路が壊れていると永久に通知が出ない状態になる。
+     */
+    console.log('\n㉑ 期限を決めずに停止する（再開を押すまで止まったまま）')
+    await reset()
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: {
+        respectBusinessHours: false,
+        reminderBackoffEnabled: false,
+        digestRepeatReminders: false,
+        remindersPausedUntil: null,
+        remindersPauseIndefinite: false,
+        inProgressMinutes: 0,
+      },
+    })
+    await prisma.notificationChannel.create({
+      data: { name: '社内LINEグループ', type: ChannelType.LINE_GROUP, target: 'Ginternal', purpose: ChannelPurpose.DEFAULT_GROUP },
+    })
+
+    const I0 = new Date('2026-08-29T00:00:00Z')
+    await inbound('Uindef1', '無期限停止の検証', I0, 'msg-indef-1')
+    const iConv = await prisma.conversation.findFirstOrThrow({ where: { customer: { lineUserId: 'Uindef1' } } })
+    const iSentCount = async (): Promise<number> =>
+      prisma.reminder.count({ where: { conversationId: iConv.id, status: 'SENT' } })
+
+    await prisma.appSettings.update({ where: { id: 1 }, data: { remindersPauseIndefinite: true } })
+
+    const indefRun = await runReminderJob(new Date(I0.getTime() + 120 * MIN))
+    check('期限なしでも止まる', indefRun.paused === true && indefRun.sent === 0, indefRun)
+    check('停止中は1通も送られない', (await iSentCount()) === 0, await iSentCount())
+
+    // 期限付き停止なら明けている時間まで進めても、無期限は戻らない
+    const muchLater = await runReminderJob(new Date(I0.getTime() + 60 * 24 * MIN))
+    check('1日経っても自動では戻らない', muchLater.paused === true, muchLater)
+    check('1日経っても送られない', (await iSentCount()) === 0, await iSentCount())
+
+    const stillFlagged = await prisma.appSettings.findUniqueOrThrow({ where: { id: 1 } })
+    check('停止のフラグが勝手に消えない', stillFlagged.remindersPauseIndefinite === true)
+
+    // 停止中でも実行記録は残る。定期実行の死活監視が赤くならないこと
+    const indefRunRow = await prisma.cronRun.findFirst({ where: { job: 'reminders' }, orderBy: { startedAt: 'desc' } })
+    check('停止中でも実行記録は残る（死活監視が赤くならない）', indefRunRow?.finishedAt !== null, indefRunRow?.finishedAt)
+
+    /**
+     * 再開。APIは期限をわずかに過去へ置いて出ていく（見張り番を1回見送る目印）。
+     * ここでは同じ状態を作って、戻ることと誤検知しないことを確かめる。
+     */
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: { remindersPauseIndefinite: false, remindersPausedUntil: new Date(I0.getTime() + 61 * 24 * MIN - 1000) },
+    })
+    const afterResume2 = await runReminderJob(new Date(I0.getTime() + 61 * 24 * MIN))
+    check('再開すると送られる', afterResume2.sent >= 1, afterResume2)
+    check('再開直後は見張り番を回さない', afterResume2.watchdog === 0, afterResume2.watchdog)
+    check('止めていた分が消えていない', (await iSentCount()) >= 1, await iSentCount())
+
+    const resumedSettings = await prisma.appSettings.findUniqueOrThrow({ where: { id: 1 } })
+    check('再開後は目印の期限も消える', resumedSettings.remindersPausedUntil === null, resumedSettings.remindersPausedUntil)
+    check('再開後は無期限フラグも下りている', resumedSettings.remindersPauseIndefinite === false)
+
+    const normalRun2 = await runReminderJob(new Date(I0.getTime() + 61 * 24 * MIN + 10 * MIN))
+    check('次の回は通常運転に戻る', normalRun2.paused === undefined, normalRun2.paused)
+
+    /**
+     * まとめて対応済みにする。
+     *
+     * 一括の肝は「全部通ること」ではなく **通らなかった分が黙って消えないこと**。
+     * 競合・既済・存在しないIDが混ざったときに、閉じた分と閉じなかった分が
+     * 正しく分かれて返ることを確かめる。
+     */
+    console.log('\n㉒ まとめて対応済みにする')
+    await reset()
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: {
+        respectBusinessHours: false,
+        remindersPausedUntil: null,
+        remindersPauseIndefinite: false,
+        inProgressMinutes: 0,
+      },
+    })
+
+    const BK0 = new Date('2026-08-30T00:00:00Z')
+    const bIds: string[] = []
+    for (let n = 1; n <= 4; n += 1) {
+      await inbound(`Ubulk${n}`, `まとめ検証${n}`, new Date(BK0.getTime() + n * MIN), `msg-bulk-${n}`)
+      const c = await prisma.customer.findFirstOrThrow({ where: { lineUserId: `Ubulk${n}` } })
+      bIds.push(c.id)
+    }
+    const bConvs = await prisma.conversation.findMany({ where: { customerId: { in: bIds } } })
+    check('4件が未返信として並ぶ', bConvs.length === 4 && bConvs.every((c) => c.replyState === ReplyState.AWAITING))
+
+    const bCtx = await loadPolicyContext()
+    const versionOf = (customerId: string): number =>
+      bConvs.find((c) => c.customerId === customerId)?.version ?? -1
+
+    // 3件目だけ、画面を開いたあとに状態が動いた状況を作る（版がずれる）
+    await prisma.conversation.update({
+      where: { customerId: bIds[2] as string },
+      data: { version: { increment: 1 } },
+    })
+    // 4件目は先に誰かが閉じた
+    await recordOutboundMessage(
+      { customerId: bIds[3] as string, text: null, sentAt: new Date(BK0.getTime() + 10 * MIN), source: 'MANUAL', via: ResolvedVia.MANUAL },
+      bCtx,
+      await loadFollowUpContext(),
+    )
+
+    const bulk = await bulkResolveConversations(
+      [
+        { customerId: bIds[0] as string, version: versionOf(bIds[0] as string) },
+        { customerId: bIds[1] as string, version: versionOf(bIds[1] as string) },
+        // 同じ顧客を2回入れても1回しか処理しない
+        { customerId: bIds[1] as string, version: versionOf(bIds[1] as string) },
+        { customerId: bIds[2] as string, version: versionOf(bIds[2] as string) },
+        { customerId: bIds[3] as string, version: versionOf(bIds[3] as string) },
+        { customerId: 'does-not-exist', version: 0 },
+      ],
+      { id: 'tester', staffId: null },
+      bCtx,
+      await loadFollowUpContext(),
+    )
+
+    check('版が合う2件だけが閉じる', bulk.resolved.length === 2, bulk.resolved)
+    check('重複指定は1回しか処理されない', new Set(bulk.resolved).size === bulk.resolved.length)
+    check(
+      '版がずれた分は競合として返る',
+      bulk.skipped.some((x) => x.customerId === bIds[2] && x.reason === 'CONFLICT'),
+      bulk.skipped,
+    )
+    check(
+      '既に閉じている分は既済として返る',
+      bulk.skipped.some((x) => x.customerId === bIds[3] && x.reason === 'ALREADY_RESOLVED'),
+      bulk.skipped,
+    )
+    check(
+      '存在しないIDは未検出として返る',
+      bulk.skipped.some((x) => x.customerId === 'does-not-exist' && x.reason === 'NOT_FOUND'),
+      bulk.skipped,
+    )
+    check(
+      '閉じた分と閉じなかった分の合計が指定した顧客数と一致する（黙って消えない）',
+      bulk.resolved.length + bulk.skipped.length === 5,
+      { resolved: bulk.resolved.length, skipped: bulk.skipped.length },
+    )
+
+    const afterBulk = await prisma.conversation.findMany({ where: { customerId: { in: bIds } } })
+    const closed = afterBulk.filter((c) => c.replyState === ReplyState.REPLIED)
+    check('閉じた会話はリマインド予定が消える', closed.every((c) => c.nextReminderAt === null), closed.map((c) => c.nextReminderAt))
+    check(
+      '競合した会話は未返信のまま残る（取りこぼさない）',
+      afterBulk.find((c) => c.customerId === bIds[2])?.replyState === ReplyState.AWAITING,
+    )
+
+    // まとめて閉じても、1件ずつ閉じたときと同じ履歴が残る
+    const bulkLogs = await prisma.message.count({
+      where: { customerId: { in: bulk.resolved }, direction: 'OUTBOUND' },
+    })
+    check('閉じた件数ぶん記録が残る（監査できる）', bulkLogs === bulk.resolved.length, bulkLogs)
+
+    const bulkRun = await runReminderJob(new Date(BK0.getTime() + 180 * MIN))
+    const reResent = await prisma.reminder.count({
+      where: { customerId: { in: bulk.resolved }, status: 'SENT' },
+    })
+    check('閉じた相手には以後送られない', reResent === 0, { reResent, bulkRun })
 
   } finally {
     server.close()

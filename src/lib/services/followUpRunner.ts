@@ -13,6 +13,7 @@ import { ActionType, FollowUpSource, type Customer } from '@prisma/client'
 
 import { ACTION_TYPE_LABEL, CUSTOMER_STATUS_LABEL, TERMINAL_STATUSES, rulesForStatus } from '@/lib/domain/followUp'
 import { resolveFollowUpTargets, type NotifyTarget } from '@/lib/domain/escalation'
+import { isPaused } from '@/lib/domain/pauseDuration'
 import { dispatchNotification } from '@/lib/notify/dispatcher'
 import { prisma } from '@/lib/prisma'
 import {
@@ -64,8 +65,10 @@ async function processDueCustomers(ctx: FollowUpContext): Promise<{ transitioned
    * **次の実行で繰り延べられる**。未返信リマインドの一時停止と同じ考え方。
    * 自動遷移（休眠への移行など）は通知ではないので止めない。
    */
-  const pausedUntil = settings.remindersPausedUntil
-  const paused = pausedUntil !== null && pausedUntil.getTime() > ctx.now.getTime()
+  const paused = isPaused(
+    { until: settings.remindersPausedUntil, indefinite: settings.remindersPauseIndefinite },
+    ctx.now,
+  )
 
   for (const customer of due) {
     try {

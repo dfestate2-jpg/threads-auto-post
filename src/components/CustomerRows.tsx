@@ -1,7 +1,11 @@
+"use client";
+
 import { HandlingStatus } from "@prisma/client";
 import Link from "next/link";
+import { useMemo, useState } from "react";
 
 import { AssigneeSelect } from "./AssigneeSelect";
+import { BulkResolveBar } from "./BulkResolveBar";
 import { InProgressBadge } from "./InProgressBadge";
 import { ResolveButton } from "./ResolveButton";
 import { StatusSelect } from "./StatusSelect";
@@ -41,12 +45,56 @@ export function CustomerRows({
   rows,
   staff,
   timezone,
+  /**
+   * まとめて対応済みにする操作を出すか。
+   * 未返信一覧では出すが、ダッシュボードの抜粋（ワースト10）では出さない。
+   * 全体を見ていない場所で一括操作をさせると、選び漏れに気づけない
+   */
+  bulkResolve = false,
 }: {
   rows: CustomerRow[];
   /** 担当者プルダウンの選択肢 */
   staff: { id: string; name: string }[];
   timezone: string;
+  bulkResolve?: boolean;
 }) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  /** 対応済みの行は選べない。押しても何も起きない操作を見せない */
+  const selectable = useMemo(
+    () => rows.filter((r) => r.handlingStatus !== HandlingStatus.DONE),
+    [rows],
+  );
+
+  /**
+   * 選択は「いま画面にある行」に限る。
+   * ページを移ると前のページの選択は消える。見えていないものを
+   * まとめて閉じられると、何を閉じたのか本人にも分からなくなる
+   */
+  const selected = useMemo(
+    () =>
+      selectable
+        .filter((r) => selectedIds.has(r.customerId))
+        .map((r) => ({ customerId: r.customerId, version: r.version })),
+    [selectable, selectedIds],
+  );
+
+  const toggle = (customerId: string): void => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(customerId)) next.delete(customerId);
+      else next.add(customerId);
+      return next;
+    });
+  };
+
+  const allSelected =
+    selectable.length > 0 && selectable.every((r) => selectedIds.has(r.customerId));
+
+  const toggleAll = (): void => {
+    setSelectedIds(allSelected ? new Set() : new Set(selectable.map((r) => r.customerId)));
+  };
+
   if (rows.length === 0) {
     return (
       <div className="card p-10 text-center text-slate-500">
@@ -55,16 +103,30 @@ export function CustomerRows({
     );
   }
 
+  const checkbox = (r: CustomerRow) =>
+    bulkResolve && r.handlingStatus !== HandlingStatus.DONE ? (
+      <input
+        type="checkbox"
+        className="h-5 w-5 shrink-0 accent-slate-900"
+        checked={selectedIds.has(r.customerId)}
+        aria-label={`${r.name} を選択`}
+        onClick={(e) => e.stopPropagation()}
+        onChange={() => toggle(r.customerId)}
+      />
+    ) : null;
+
   return (
     <>
       {/* --- スマホ --- */}
       <ul className="space-y-2 md:hidden">
         {rows.map((r) => (
           <li key={r.customerId} className="card p-4">
-            <Link
-              href={`/customers/${r.customerId}`}
-              className="block active:opacity-70"
-            >
+            <div className="flex items-start gap-3">
+              {checkbox(r)}
+              <Link
+                href={`/customers/${r.customerId}`}
+                className="block flex-1 active:opacity-70"
+              >
               <div className="flex items-start justify-between gap-3">
                 <span className="text-base font-bold leading-tight">
                   {r.name}
@@ -78,7 +140,8 @@ export function CustomerRows({
                 <span>リマインド {r.reminderCount}回</span>
                 <span>{formatDateTimeJa(r.lastInboundAt, timezone)}</span>
               </div>
-            </Link>
+              </Link>
+            </div>
             {/* 担当は上のリンク内に文字で出さない。同じ情報が2か所にあると、
                 どちらを直せばよいのか分からなくなる */}
             <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
@@ -129,6 +192,18 @@ export function CustomerRows({
           <table className="w-full min-w-[52rem] text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs text-slate-600">
+                {bulkResolve ? (
+                  <th className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      className="h-5 w-5 accent-slate-900"
+                      checked={allSelected}
+                      aria-label="表示中をすべて選択"
+                      onChange={toggleAll}
+                      title="表示中をすべて選択"
+                    />
+                  </th>
+                ) : null}
                 <th className="px-4 py-3">顧客名</th>
                 <th className="px-4 py-3">未返信経過</th>
                 <th className="px-4 py-3">最終メッセージ</th>
@@ -143,6 +218,7 @@ export function CustomerRows({
                   key={r.customerId}
                   className="border-b border-slate-100 last:border-0 hover:bg-slate-50"
                 >
+                  {bulkResolve ? <td className="px-4 py-3">{checkbox(r)}</td> : null}
                   {/* セルごとにリンクを敷いて、行のどこを押しても開けるようにする */}
                   <td className="p-0">
                     <Link
@@ -234,6 +310,15 @@ export function CustomerRows({
           </table>
         </div>
       </div>
+
+      {/* 画面下に貼り付けて、長い一覧でもスクロールせずに押せるようにする */}
+      {bulkResolve ? (
+        <BulkResolveBar
+          selected={selected}
+          onDone={() => setSelectedIds(new Set())}
+          onClear={() => setSelectedIds(new Set())}
+        />
+      ) : null}
     </>
   );
 }
