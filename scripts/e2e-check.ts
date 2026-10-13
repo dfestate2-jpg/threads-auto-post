@@ -18,7 +18,8 @@ import { loadPolicyContext } from '../src/lib/services/context'
 import { loadFollowUpContext } from '../src/lib/services/followUp'
 import { recordInboundMessage, recordOutboundMessage, rescheduleConversation } from '../src/lib/services/conversation'
 import { runReminderJob } from '../src/lib/services/reminderRunner'
-import { bulkResolveConversations } from '../src/lib/services/bulkResolve'
+import { bulkResolveConversations, resolveAllMatching } from '../src/lib/services/bulkResolve'
+import { buildUnrepliedFilter } from '../src/lib/services/unrepliedFilter'
 import { applyQuickAction } from '../src/lib/services/quickAction'
 import { buildAssignActionData, buildResolveActionData } from '../src/lib/line/quickAction'
 
@@ -1106,6 +1107,105 @@ async function main(): Promise<void> {
       where: { customerId: { in: bulk.resolved }, status: 'SENT' },
     })
     check('閉じた相手には以後送られない', reResent === 0, { reResent, bulkRun })
+
+
+    /**
+     * 選択なしで「すべて対応済みにする」。
+     *
+     * 確かめたいのは3つ。
+     *  ① 画面の1ページではなく **絞り込み条件の全件** が対象になること
+     *  ② 1回では小分けにしか処理せず、**残り件数を正しく返す**こと
+     *  ③ 絞り込んでいるときは **条件の外を閉じない**こと
+     * ③が崩れると、担当者で絞ったつもりが他人の案件まで閉じる事故になる。
+     */
+    console.log('\n㉓ 選択なしで未返信をすべて対応済みにする')
+    await reset()
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: {
+        respectBusinessHours: false,
+        remindersPausedUntil: null,
+        remindersPauseIndefinite: false,
+        inProgressMinutes: 0,
+      },
+    })
+
+    const A0 = new Date('2026-08-31T00:00:00Z')
+    // 1ページ（上限40件）を超える件数を作って、小分け処理と残り件数を確かめる
+    const ALL_COUNT = 45
+    for (let n = 1; n <= ALL_COUNT; n += 1) {
+      await inbound(`Uall${n}`, `全件検証${n}`, new Date(A0.getTime() + n * MIN), `msg-all-${n}`)
+    }
+    const awaitingWhere = { replyState: ReplyState.AWAITING }
+    check(
+      `${ALL_COUNT}件が未返信として並ぶ`,
+      (await prisma.conversation.count({ where: awaitingWhere })) === ALL_COUNT,
+      await prisma.conversation.count({ where: awaitingWhere }),
+    )
+
+    const aCtx = await loadPolicyContext()
+    const { where: allWhere, description: allDesc } = buildUnrepliedFilter({}, new Date())
+    check('既定の絞り込みは「未返信」', allDesc === '未返信', allDesc)
+
+    // 1回目: 上限ぶんだけ閉じ、残りを返す
+    const allFirst = await resolveAllMatching(allWhere, { id: 'tester', staffId: null }, aCtx, await loadFollowUpContext())
+    check('1回では上限ぶんだけ閉じる（長すぎるリクエストで切れない）', allFirst.resolved.length === 40, allFirst.resolved.length)
+    check('残り件数を返す', allFirst.remaining === ALL_COUNT - 40, allFirst.remaining)
+
+    // 2回目: 残りを閉じ、残り0になる
+    const allSecond = await resolveAllMatching(allWhere, { id: 'tester', staffId: null }, aCtx, await loadFollowUpContext())
+    check('続きを呼ぶと残りが閉じる', allSecond.resolved.length === ALL_COUNT - 40, allSecond.resolved.length)
+    check('残りが0になる', allSecond.remaining === 0, allSecond.remaining)
+    check(
+      '未返信が1件も残らない',
+      (await prisma.conversation.count({ where: awaitingWhere })) === 0,
+      await prisma.conversation.count({ where: awaitingWhere }),
+    )
+
+    // もう一度呼んでも何も起きない（押し直しても壊れない）
+    const allThird = await resolveAllMatching(allWhere, { id: 'tester', staffId: null }, aCtx, await loadFollowUpContext())
+    check('全部閉じたあとに押しても何も起きない', allThird.resolved.length === 0 && allThird.remaining === 0, allThird)
+
+    const allRun = await runReminderJob(new Date(A0.getTime() + 300 * MIN))
+    check('閉じた相手には以後送られない', allRun.sent === 0, allRun)
+
+    /** 絞り込んでいるときは、条件の外を閉じない */
+    await reset()
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: { respectBusinessHours: false, remindersPausedUntil: null, remindersPauseIndefinite: false, inProgressMinutes: 0 },
+    })
+    const staffA = await prisma.staff.create({ data: { name: '担当A', role: 'STAFF', active: true } })
+
+    const F0 = new Date('2026-09-01T00:00:00Z')
+    await inbound('Ufilt1', '担当Aの案件', F0, 'msg-filt-1')
+    await inbound('Ufilt2', '担当なしの案件', new Date(F0.getTime() + MIN), 'msg-filt-2')
+    const mine = await prisma.customer.findFirstOrThrow({ where: { lineUserId: 'Ufilt1' } })
+    await prisma.customer.update({ where: { id: mine.id }, data: { assigneeId: staffA.id } })
+
+    const { where: mineWhere, description: mineDesc } = buildUnrepliedFilter({ assignee: staffA.id }, new Date())
+    check('絞り込みの説明に担当者が出る', mineDesc.includes('担当者'), mineDesc)
+
+    const filtered = await resolveAllMatching(
+      mineWhere,
+      { id: 'tester', staffId: null },
+      await loadPolicyContext(),
+      await loadFollowUpContext(),
+    )
+    check('絞り込みに当てはまる1件だけが閉じる', filtered.resolved.length === 1, filtered.resolved.length)
+    check('絞り込みの残りは0', filtered.remaining === 0, filtered.remaining)
+
+    const otherConv = await prisma.conversation.findFirstOrThrow({ where: { customer: { lineUserId: 'Ufilt2' } } })
+    check('条件の外（担当者なし）は閉じられず未返信のまま', otherConv.replyState === ReplyState.AWAITING, otherConv.replyState)
+
+    /**
+     * 担当者と検索を同時に指定しても両方効く。
+     * 以前は customer を2回書いていたため、後から広げたほうが担当者の
+     * 絞り込みを黙って上書きしていた（担当者で絞ったつもりが全員になる）
+     */
+    const { where: bothWhere } = buildUnrepliedFilter({ assignee: staffA.id, q: 'このような顧客はいない' }, new Date())
+    const bothCount = await prisma.conversation.count({ where: bothWhere })
+    check('担当者と検索の両方が効く（片方が上書きされない）', bothCount === 0, bothCount)
 
   } finally {
     server.close()

@@ -1,4 +1,4 @@
-import { HandlingStatus, type Prisma, ReplyState } from '@prisma/client'
+import { ReplyState } from '@prisma/client'
 import Link from 'next/link'
 
 import { AppShell } from '@/components/AppShell'
@@ -8,6 +8,7 @@ import { CustomerRows } from '@/components/CustomerRows'
 import { requirePageSession } from '@/lib/auth/guard'
 import { diffMinutes, formatElapsedJa } from '@/lib/domain/time'
 import { buildPauseAlert } from '@/lib/pauseAlert'
+import { buildUnrepliedFilter } from '@/lib/services/unrepliedFilter'
 import { prisma, withReadRetry } from '@/lib/prisma'
 import { getSettings } from '@/lib/services/settings'
 
@@ -29,33 +30,12 @@ export default async function UnrepliedCustomersPage({
   const settings = await getSettings()
   const now = new Date()
 
-  const status = params.status as HandlingStatus | undefined
-  const assigneeId = params.assignee
-  const onlyAwaiting = params.awaiting !== '0'
-  const q = params.q?.trim()
   const page = Math.max(1, Number(params.page ?? 1) || 1)
   /** ダッシュボードの「3時間以上未返信」などから直接この一覧へ来るための絞り込み（分） */
   const overMinutes = Number(params.over) > 0 ? Number(params.over) : null
 
-  const where: Prisma.ConversationWhereInput = {
-    ...(onlyAwaiting ? { replyState: ReplyState.AWAITING } : {}),
-    ...(overMinutes
-      ? { firstUnrepliedAt: { not: null, lte: new Date(now.getTime() - overMinutes * 60_000) } }
-      : {}),
-    ...(status ? { handlingStatus: status } : {}),
-    ...(assigneeId ? { customer: { assigneeId: assigneeId === 'none' ? null : assigneeId } } : {}),
-    ...(q
-      ? {
-          customer: {
-            OR: [
-              { name: { contains: q, mode: 'insensitive' } },
-              { displayName: { contains: q, mode: 'insensitive' } },
-              { lineUserId: { contains: q } },
-            ],
-          },
-        }
-      : {}),
-  }
+  // 一括処理のAPIと同じ関数で組む。別々に組むと表示と閉じる対象が食い違う
+  const { where, description } = buildUnrepliedFilter(params, now)
 
   const [rows, total, staff] = await withReadRetry(() =>
 
@@ -121,6 +101,8 @@ export default async function UnrepliedCustomersPage({
           staff={staff.map((s) => ({ id: s.id, name: s.name }))}
           timezone={settings.timezone}
           bulkResolve
+          total={total}
+          filterDescription={description}
         />
       </div>
 
