@@ -11,6 +11,8 @@ const NAV = [
   // ここから下はリマインドシステム側。触っていない
   { href: '/reminders', label: '未返信' },
   { href: '/customers', label: '顧客' },
+  { href: '/contacts', label: '配信先リスト' },
+  { href: '/campaigns', label: '一斉配信' },
   { href: '/admin', label: '管理者' },
   { href: '/settings', label: '設定' },
   // 他の業務システムへ戻れる入口。ここから行き来できないと、
