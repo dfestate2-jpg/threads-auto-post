@@ -17,6 +17,7 @@ import {
 } from '@/lib/domain/escalation'
 import { buildDigestText, buildNotificationText, type DigestEntry } from '@/lib/domain/notificationText'
 import { computeNextReminderAt, isAwaitingReply } from '@/lib/domain/reminderSchedule'
+import { isPaused } from '@/lib/domain/pauseDuration'
 import { addBusinessMinutes } from '@/lib/domain/businessHours'
 import { addMinutes, diffMinutes } from '@/lib/domain/time'
 import { env } from '@/lib/env'
@@ -662,7 +663,7 @@ export async function runReminderJob(now = new Date()): Promise<RunSummary> {
      * 全会話を触る必要がなく、途中で落ちても状態が壊れない。
      */
     const pausedUntil = ctx.settings.remindersPausedUntil
-    if (pausedUntil && pausedUntil.getTime() > now.getTime()) {
+    if (isPaused({ until: pausedUntil, indefinite: ctx.settings.remindersPauseIndefinite }, now)) {
       // 実行記録は finally 側で残る。定期実行そのものは動いているので死活監視は緑のまま
       summary.paused = true
       return summary
@@ -675,6 +676,9 @@ export async function runReminderJob(now = new Date()): Promise<RunSummary> {
      * 「配信が遅延している」と誤検知して管理者に警告が飛ぶ。
      * この直後に本人たちへ送るので、1回だけ見送る。
      * 期限を消すことが、その「1回だけ」の目印を兼ねている。
+     *
+     * 無期限停止から「再開」で戻るときも同じ扱いが要るので、再開のAPIが
+     * 期限をわずかに過去へ置いて出ていく。ここはその目印も拾う。
      */
     const justResumed = pausedUntil !== null
     if (justResumed) {

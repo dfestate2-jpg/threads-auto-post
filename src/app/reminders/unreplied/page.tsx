@@ -7,6 +7,7 @@ import { CustomerFilters } from '@/components/CustomerFilters'
 import { CustomerRows } from '@/components/CustomerRows'
 import { requirePageSession } from '@/lib/auth/guard'
 import { diffMinutes, formatElapsedJa } from '@/lib/domain/time'
+import { buildPauseAlert } from '@/lib/pauseAlert'
 import { prisma, withReadRetry } from '@/lib/prisma'
 import { getSettings } from '@/lib/services/settings'
 
@@ -76,7 +77,8 @@ export default async function UnrepliedCustomersPage({
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
-    <AppShell>
+    // 停止中は誰にも通知が届かない。未返信を見る画面では必ず最上部に出す
+    <AppShell alert={buildPauseAlert(settings, now)}>
       <AutoRefresh />
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">未返信一覧</h1>
@@ -118,6 +120,7 @@ export default async function UnrepliedCustomersPage({
           }))}
           staff={staff.map((s) => ({ id: s.id, name: s.name }))}
           timezone={settings.timezone}
+          bulkResolve
         />
       </div>
 

@@ -6,6 +6,7 @@ import { AutoRefresh } from "@/components/AutoRefresh";
 import { CustomerRows } from "@/components/CustomerRows";
 import { MessageUsageCard } from "@/components/MessageUsageCard";
 import { StatCard, formatDateTimeJa } from "@/components/ui";
+import { buildPauseAlert } from "@/lib/pauseAlert";
 import { requirePageSession } from "@/lib/auth/guard";
 import { diffMinutes } from "@/lib/domain/time";
 import { prisma, withReadRetry } from "@/lib/prisma";
@@ -54,11 +55,7 @@ export default async function ReminderDashboardPage() {
    * **定期実行が止まったのと同じ結果**（誰にも通知が届かない）になるので、
    * 同じ重さで画面の一番上に出し、通数やCronの警告より優先して見せる。
    */
-  const pausedUntil = settings.remindersPausedUntil
-  const pauseAlert =
-    pausedUntil && pausedUntil.getTime() > now.getTime()
-      ? `⏸ リマインドを一時停止中です（${formatDateTimeJa(pausedUntil, settings.timezone)} まで）。この間、未返信があっても通知されません。`
-      : null
+  const pauseAlert = buildPauseAlert(settings, now)
 
   const quotaAlert =
     usage.used >= usage.quota
